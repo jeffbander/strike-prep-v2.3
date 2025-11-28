@@ -6,7 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:super-admin": "playwright test 01-super-admin.spec.ts",
+    "test:hs-admin": "playwright test 02-health-system-admin.spec.ts",
+    "test:hospital-admin": "playwright test 03-hospital-admin.spec.ts",
+    "test:dept-admin": "playwright test 04-departmental-admin.spec.ts",
+    "test:workflow": "playwright test 05-full-workflow.spec.ts",
+    "test:report": "playwright show-report"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.35.5",
@@ -22,10 +32,13 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@clerk/testing": "^1.13.19",
+    "@playwright/test": "^1.57.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^17.2.3",
     "eslint": "^9",
     "eslint-config-next": "16.0.4",
     "tailwindcss": "^4",

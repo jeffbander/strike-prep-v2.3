@@ -80,6 +80,22 @@ export default defineSchema({
     .index("by_short_code", ["shortCode"]),
 
   // ═══════════════════════════════════════════════════════════════════
+  // UNITS (Hospital Floor/Unit tracking)
+  // ═══════════════════════════════════════════════════════════════════
+
+  units: defineTable({
+    hospitalId: v.id("hospitals"),
+    name: v.string(), // "7E", "ICU", "CCU"
+    description: v.optional(v.string()),
+    floorNumber: v.optional(v.string()),
+    createdBy: v.id("users"),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_hospital", ["hospitalId"])
+    .index("by_hospital_active", ["hospitalId", "isActive"]),
+
+  // ═══════════════════════════════════════════════════════════════════
   // DEPARTMENTS
   // ═══════════════════════════════════════════════════════════════════
 
@@ -92,6 +108,20 @@ export default defineSchema({
   })
     .index("by_hospital", ["hospitalId"])
     .index("by_health_system", ["healthSystemId"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // DEPARTMENT SKILLS (Skills required by department)
+  // ═══════════════════════════════════════════════════════════════════
+
+  department_skills: defineTable({
+    departmentId: v.id("departments"),
+    skillId: v.id("skills"),
+    isRequired: v.boolean(),
+    addedBy: v.id("users"),
+    addedAt: v.number(),
+  })
+    .index("by_department", ["departmentId"])
+    .index("by_skill", ["skillId"]),
 
   // ═══════════════════════════════════════════════════════════════════
   // SKILLS (System-wide)
@@ -116,7 +146,20 @@ export default defineSchema({
     hospitalId: v.id("hospitals"),
     healthSystemId: v.id("health_systems"),
     name: v.string(),
-    unitName: v.optional(v.string()),
+    shortCode: v.string(), // For job code generation
+    unitId: v.optional(v.id("units")),
+
+    // Patient Capacity
+    dayCapacity: v.optional(v.number()),
+    nightCapacity: v.optional(v.number()),
+    weekendCapacity: v.optional(v.number()),
+
+    // Shift times (configurable per service)
+    dayShiftStart: v.string(), // "07:00"
+    dayShiftEnd: v.string(), // "19:00"
+    nightShiftStart: v.string(), // "19:00"
+    nightShiftEnd: v.string(), // "07:00"
+
     operatesDays: v.boolean(),
     operatesNights: v.boolean(),
     operatesWeekends: v.boolean(),
@@ -125,15 +168,28 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_department", ["departmentId"])
-    .index("by_hospital", ["hospitalId"]),
+    .index("by_hospital", ["hospitalId"])
+    .index("by_health_system", ["healthSystemId"])
+    .index("by_short_code", ["shortCode"]),
 
   // ═══════════════════════════════════════════════════════════════════
   // SERVICE JOB TYPES
+  // Per-job-type shift configuration for flexible scheduling
   // ═══════════════════════════════════════════════════════════════════
 
   service_job_types: defineTable({
     serviceId: v.id("services"),
     jobTypeId: v.id("job_types"),
+    // Per-job-type shift configuration (optional - falls back to service defaults)
+    dayShiftStart: v.optional(v.string()), // "07:00"
+    dayShiftEnd: v.optional(v.string()), // "19:00"
+    nightShiftStart: v.optional(v.string()), // "19:00"
+    nightShiftEnd: v.optional(v.string()), // "07:00"
+    // Which shifts this job type works (overrides service-level settings)
+    operatesDays: v.optional(v.boolean()),
+    operatesNights: v.optional(v.boolean()),
+    // Headcount for this job type per shift
+    headcount: v.optional(v.number()),
   })
     .index("by_service", ["serviceId"])
     .index("by_job_type", ["jobTypeId"]),
