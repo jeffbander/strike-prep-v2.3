@@ -22,7 +22,8 @@ test.describe("Health System Admin Journey", () => {
 
   test("should sign in as Health System Admin", async ({ page }) => {
     await page.goto(URLS.signIn);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForTimeout(1000); // Give Clerk time to initialize
 
     // Enter credentials
     const emailInput = page.locator("input[name='identifier']");
@@ -51,7 +52,7 @@ test.describe("Health System Admin Journey", () => {
     await signInAs(page, HEALTH_SYSTEM_ADMIN.email, HEALTH_SYSTEM_ADMIN.password);
 
     await page.goto(URLS.dashboard);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Health System Admin should NOT see "Health Systems" menu (plural)
     // They should only see their own health system
@@ -69,7 +70,7 @@ test.describe("Health System Admin Journey", () => {
     await signInAs(page, HEALTH_SYSTEM_ADMIN.email, HEALTH_SYSTEM_ADMIN.password);
 
     await page.goto("/dashboard/hospitals");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Verify hospitals page loads
     const hospitalsHeader = page.locator("h1:has-text('Hospitals'), h2:has-text('Hospitals'), text=Hospital");
@@ -87,7 +88,7 @@ test.describe("Health System Admin Journey", () => {
     await signInAs(page, HEALTH_SYSTEM_ADMIN.email, HEALTH_SYSTEM_ADMIN.password);
 
     await page.goto("/dashboard/hospitals");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Look for create button
     const createButton = page.locator("button:has-text('Create'), button:has-text('Add'), button:has-text('New')");
@@ -115,7 +116,7 @@ test.describe("Health System Admin Journey", () => {
       await submitButton.first().click();
 
       // Wait for success
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
 
       // Verify creation
       const newHospital = page.locator(`text=${TEST_DATA.hospital.name}`);
@@ -132,7 +133,7 @@ test.describe("Health System Admin Journey", () => {
 
     // Navigate to departments
     await page.goto("/dashboard/departments");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Check if departments exist
     const departmentRows = page.locator("tr, [data-testid='department-row'], .department-item");
@@ -169,7 +170,7 @@ test.describe("Health System Admin Journey", () => {
     await signInAs(page, HEALTH_SYSTEM_ADMIN.email, HEALTH_SYSTEM_ADMIN.password);
 
     await page.goto("/dashboard/users");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Verify users page loads
     const usersHeader = page.locator("h1:has-text('Users'), h2:has-text('Users'), text=User");
@@ -212,7 +213,7 @@ test.describe("Health System Admin Journey", () => {
     // Try to access a different health system directly
     // This should either redirect or show an error
     await page.goto("/dashboard/health-systems");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Either:
     // 1. The page redirects back to dashboard
@@ -248,7 +249,7 @@ test.describe("Health System Admin Journey", () => {
     await signInAs(page, HEALTH_SYSTEM_ADMIN.email, HEALTH_SYSTEM_ADMIN.password);
 
     await page.goto("/dashboard/users");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const createButton = page.locator("button:has-text('Create'), button:has-text('Add'), button:has-text('Invite')");
 
@@ -297,7 +298,7 @@ test.describe("Health System Admin - Hospital Creation Flow", () => {
 
     // Step 1: Navigate to hospitals
     await page.goto("/dashboard/hospitals");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Step 2: Create hospital
     const createButton = page.locator("button:has-text('Create'), button:has-text('Add')");
@@ -317,7 +318,7 @@ test.describe("Health System Admin - Hospital Creation Flow", () => {
       const submitButton = page.locator("button[type='submit'], button:has-text('Save')");
       await submitButton.first().click();
 
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
 
       // Step 3: Verify hospital appears in list
       console.log("Hospital created - verifying in list");
@@ -325,7 +326,7 @@ test.describe("Health System Admin - Hospital Creation Flow", () => {
 
     // Step 4: Navigate to departments to verify auto-creation
     await page.goto("/dashboard/departments");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     console.log("✓ Full hospital creation flow completed");
   });

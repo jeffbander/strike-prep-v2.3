@@ -112,9 +112,13 @@ function SuperAdminDashboard() {
             <h3 className="font-medium">Manage Users</h3>
             <p className="text-sm text-slate-400">Invite and manage admin users</p>
           </a>
-          <a href="/dashboard/coverage" className="block p-4 bg-emerald-700 hover:bg-emerald-600 rounded-lg col-span-1 md:col-span-2 transition-colors">
+          <a href="/dashboard/coverage" className="block p-4 bg-emerald-700 hover:bg-emerald-600 rounded-lg transition-colors">
             <h3 className="font-medium">Coverage Dashboard</h3>
             <p className="text-sm text-emerald-200">View real-time coverage metrics and analytics</p>
+          </a>
+          <a href="/dashboard/audit-logs" className="block p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Audit Logs</h3>
+            <p className="text-sm text-slate-400">View system activity and changes</p>
           </a>
         </div>
       </div>
@@ -136,9 +140,13 @@ function HealthSystemAdminDashboard() {
             <h3 className="font-medium">Manage Job Types</h3>
             <p className="text-sm text-slate-400">Configure provider job types</p>
           </a>
-          <a href="/dashboard/coverage" className="block p-4 bg-emerald-700 hover:bg-emerald-600 rounded-lg col-span-1 md:col-span-2 transition-colors">
+          <a href="/dashboard/coverage" className="block p-4 bg-emerald-700 hover:bg-emerald-600 rounded-lg transition-colors">
             <h3 className="font-medium">Coverage Dashboard</h3>
             <p className="text-sm text-emerald-200">View real-time coverage metrics and analytics</p>
+          </a>
+          <a href="/dashboard/audit-logs" className="block p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Audit Logs</h3>
+            <p className="text-sm text-slate-400">View system activity and changes</p>
           </a>
         </div>
       </div>

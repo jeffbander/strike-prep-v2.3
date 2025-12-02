@@ -157,29 +157,14 @@ export const toggleActive = mutation({
     }
 
     const newStatus = !department.isActive;
+    let cascadeResult: Record<string, number> | undefined;
 
     // If deactivating, cascade to all child entities
     if (!newStatus) {
-      // Deactivate all services in this department
-      const services = await ctx.db
-        .query("services")
-        .withIndex("by_department", (q) => q.eq("departmentId", args.departmentId))
-        .collect();
-
-      for (const service of services) {
-        await ctx.db.patch(service._id, { isActive: false });
-      }
-
-      // Cancel all open job positions in this department
-      const positions = await ctx.db
-        .query("job_positions")
-        .withIndex("by_department", (q) => q.eq("departmentId", args.departmentId))
-        .filter((q) => q.eq(q.field("status"), "Open"))
-        .collect();
-
-      for (const pos of positions) {
-        await ctx.db.patch(pos._id, { status: "Cancelled", isActive: false });
-      }
+      // Use cascade function to deactivate all related entities
+      const { cascadeDeactivateDepartment } = await import("./lib/cascade");
+      const result = await cascadeDeactivateDepartment(ctx, args.departmentId);
+      cascadeResult = result.affected;
     }
 
     await ctx.db.patch(args.departmentId, { isActive: newStatus });
@@ -190,11 +175,15 @@ export const toggleActive = mutation({
       action: newStatus ? "ACTIVATE_DEPARTMENT" : "DEACTIVATE_DEPARTMENT",
       resourceType: "DEPARTMENT",
       resourceId: args.departmentId,
-      changes: { name: department.name, cascaded: !newStatus },
+      changes: {
+        name: department.name,
+        cascaded: !newStatus,
+        ...(cascadeResult && { affected: cascadeResult }),
+      },
       timestamp: Date.now(),
     });
 
-    return { isActive: newStatus };
+    return { isActive: newStatus, cascadeResult };
   },
 });
 

@@ -22,7 +22,7 @@ test.describe("Hospital Admin Journey", () => {
 
   test("should sign in as Hospital Admin", async ({ page }) => {
     await page.goto(URLS.signIn);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Enter credentials
     const emailInput = page.locator("input[name='identifier']");
@@ -51,7 +51,7 @@ test.describe("Hospital Admin Journey", () => {
     await signInAs(page, HOSPITAL_ADMIN.email, HOSPITAL_ADMIN.password);
 
     await page.goto(URLS.dashboard);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Hospital Admin should NOT see:
     // - "Health Systems" menu
@@ -79,7 +79,7 @@ test.describe("Hospital Admin Journey", () => {
     await signInAs(page, HOSPITAL_ADMIN.email, HOSPITAL_ADMIN.password);
 
     await page.goto("/dashboard/departments");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Verify departments page loads
     const departmentsHeader = page.locator("h1:has-text('Departments'), h2:has-text('Departments'), text=Department");
@@ -99,7 +99,7 @@ test.describe("Hospital Admin Journey", () => {
     await signInAs(page, HOSPITAL_ADMIN.email, HOSPITAL_ADMIN.password);
 
     await page.goto("/dashboard/departments");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Find a department row
     const departmentRow = page.locator("table tbody tr, [data-testid='department-row']").first();
@@ -113,7 +113,7 @@ test.describe("Hospital Admin Journey", () => {
       if (await toggleButton.first().isVisible()) {
         // Click to toggle
         await toggleButton.first().click();
-        await page.waitForLoadState("networkidle");
+        await page.waitForLoadState("domcontentloaded");
 
         console.log("✓ Department activation toggle clicked");
       } else {
@@ -147,7 +147,7 @@ test.describe("Hospital Admin Journey", () => {
 
     for (const url of possibleUrls) {
       await page.goto(url);
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
 
       const notFound = page.locator("text=404, text=Not Found");
       const isNotFound = await notFound.isVisible().catch(() => false);
@@ -168,7 +168,7 @@ test.describe("Hospital Admin Journey", () => {
     await signInAs(page, HOSPITAL_ADMIN.email, HOSPITAL_ADMIN.password);
 
     await page.goto("/dashboard/units");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const testUnits = ["7E", "ICU", "CCU"];
 
@@ -187,7 +187,7 @@ test.describe("Hospital Admin Journey", () => {
         const submitButton = page.locator("button[type='submit'], button:has-text('Save')");
         await submitButton.first().click();
 
-        await page.waitForLoadState("networkidle");
+        await page.waitForLoadState("domcontentloaded");
         console.log(`Created unit: ${unit}`);
       }
     }
@@ -197,7 +197,7 @@ test.describe("Hospital Admin Journey", () => {
     await signInAs(page, HOSPITAL_ADMIN.email, HOSPITAL_ADMIN.password);
 
     await page.goto("/dashboard/users");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Verify users page loads
     const usersHeader = page.locator("h1:has-text('Users'), h2:has-text('Users'), text=User");
@@ -253,7 +253,7 @@ test.describe("Hospital Admin Journey", () => {
 
     // Try to access hospitals list
     await page.goto("/dashboard/hospitals");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const currentUrl = page.url();
 
@@ -277,7 +277,7 @@ test.describe("Hospital Admin Journey", () => {
     await signInAs(page, HOSPITAL_ADMIN.email, HOSPITAL_ADMIN.password);
 
     await page.goto("/dashboard/users");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const createButton = page.locator("button:has-text('Create'), button:has-text('Add'), button:has-text('Invite')");
 
@@ -327,7 +327,7 @@ test.describe("Hospital Admin - Department Activation Flow", () => {
     await signInAs(page, HOSPITAL_ADMIN.email, HOSPITAL_ADMIN.password);
 
     await page.goto("/dashboard/departments");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const departmentsToActivate = ["Medicine", "Surgery"];
 
@@ -345,7 +345,7 @@ test.describe("Hospital Admin - Department Activation Flow", () => {
 
           if (!isChecked) {
             await toggle.first().click();
-            await page.waitForLoadState("networkidle");
+            await page.waitForLoadState("domcontentloaded");
             console.log(`✓ Activated department: ${deptName}`);
           } else {
             console.log(`Department already active: ${deptName}`);
@@ -358,7 +358,7 @@ test.describe("Hospital Admin - Department Activation Flow", () => {
           const detailToggle = page.locator("input[type='checkbox'][name='isActive'], button:has-text('Activate')");
           if (await detailToggle.first().isVisible()) {
             await detailToggle.first().click();
-            await page.waitForLoadState("networkidle");
+            await page.waitForLoadState("domcontentloaded");
             console.log(`✓ Activated department from detail: ${deptName}`);
           }
         }
@@ -373,7 +373,7 @@ test.describe("Hospital Admin - Department Activation Flow", () => {
 
     // Navigate to users
     await page.goto("/dashboard/users");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const createButton = page.locator("button:has-text('Create'), button:has-text('Add'), button:has-text('Invite')");
 
@@ -409,7 +409,7 @@ test.describe("Hospital Admin - Department Activation Flow", () => {
       const submitButton = page.locator("button[type='submit'], button:has-text('Save'), button:has-text('Create')");
       await submitButton.first().click();
 
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
       console.log("✓ Departmental Admin creation submitted");
     }
   });

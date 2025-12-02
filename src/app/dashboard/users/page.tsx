@@ -73,11 +73,34 @@ export default function UsersPage() {
         setFormData((prev) => ({
           ...prev,
           healthSystemId: currentUser.healthSystemId || "",
-          hospitalId: currentUser.hospitalId,
+          hospitalId: currentUser.hospitalId as string,
         }));
       }
     }
   }, [formData.role, currentUser]);
+
+  // Auto-select health system if only one option
+  useEffect(() => {
+    if (healthSystems && healthSystems.length === 1 && !formData.healthSystemId && isCreating) {
+      setFormData((prev) => ({ ...prev, healthSystemId: healthSystems[0]._id }));
+    }
+  }, [healthSystems, formData.healthSystemId, isCreating]);
+
+  // Auto-select hospital if only one option (when role requires it)
+  useEffect(() => {
+    if (filteredHospitals && filteredHospitals.length === 1 && !formData.hospitalId &&
+        (formData.role === "hospital_admin" || formData.role === "departmental_admin") && isCreating) {
+      setFormData((prev) => ({ ...prev, hospitalId: filteredHospitals[0]._id }));
+    }
+  }, [filteredHospitals, formData.hospitalId, formData.role, isCreating]);
+
+  // Auto-select department if only one option (when role requires it)
+  useEffect(() => {
+    if (filteredDepartments && filteredDepartments.length === 1 && !formData.departmentId &&
+        formData.role === "departmental_admin" && isCreating) {
+      setFormData((prev) => ({ ...prev, departmentId: filteredDepartments[0]._id }));
+    }
+  }, [filteredDepartments, formData.departmentId, formData.role, isCreating]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();

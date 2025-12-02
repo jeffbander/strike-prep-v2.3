@@ -45,7 +45,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Navigate to dashboard
     await page.goto(URLS.dashboard);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await expect(page.locator("text=Dashboard")).toBeVisible({ timeout: 10000 });
     console.log("✓ Super Admin signed in and dashboard visible");
 
@@ -59,7 +59,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Create/verify Health System exists
     await page.goto("/dashboard/health-systems");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const existingHS = page.locator(`text=${TEST_DATA.healthSystem.name}`);
     const hsExists = await existingHS.isVisible().catch(() => false);
@@ -78,7 +78,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
         const submitButton = page.locator("button[type='submit'], button:has-text('Save')");
         await submitButton.first().click();
-        await page.waitForLoadState("networkidle");
+        await page.waitForLoadState("domcontentloaded");
 
         console.log("✓ Health System created");
       }
@@ -88,7 +88,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Verify job types exist or create them
     await page.goto("/dashboard/job-types");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const notFound = page.locator("text=404");
     if (!(await notFound.isVisible().catch(() => false))) {
@@ -96,12 +96,12 @@ test.describe.serial("Complete Organizational Workflow", () => {
     } else {
       // Try settings path
       await page.goto("/dashboard/settings/job-types");
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
     }
 
     // Verify skills exist
     await page.goto("/dashboard/skills");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     if (!(await page.locator("text=404").isVisible().catch(() => false))) {
       console.log("✓ Skills page accessible");
@@ -118,12 +118,12 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Navigate to dashboard
     await page.goto(URLS.dashboard);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     console.log("✓ Health System Admin signed in");
 
     // Navigate to hospitals
     await page.goto("/dashboard/hospitals");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Check if test hospital exists
     const existingHospital = page.locator(`text=${TEST_DATA.hospital.name}`);
@@ -148,7 +148,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
         const submitButton = page.locator("button[type='submit'], button:has-text('Save')");
         await submitButton.first().click();
-        await page.waitForLoadState("networkidle");
+        await page.waitForLoadState("domcontentloaded");
 
         console.log("✓ Hospital created");
       }
@@ -158,7 +158,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Verify departments were auto-created
     await page.goto("/dashboard/departments");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const departmentRows = page.locator("table tbody tr, [data-testid='department-row']");
     const deptCount = await departmentRows.count();
@@ -175,12 +175,12 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Navigate to dashboard
     await page.goto(URLS.dashboard);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     console.log("✓ Hospital Admin signed in");
 
     // Navigate to departments
     await page.goto("/dashboard/departments");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Activate Medicine department if not already active
     const medicineDept = page.locator("tr:has-text('Medicine'), [data-testid='department-row']:has-text('Medicine')");
@@ -191,7 +191,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
         const isChecked = await toggle.isChecked().catch(() => false);
         if (!isChecked) {
           await toggle.click();
-          await page.waitForLoadState("networkidle");
+          await page.waitForLoadState("domcontentloaded");
           console.log("✓ Medicine department activated");
         } else {
           console.log("✓ Medicine department already active");
@@ -201,7 +201,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Try to navigate to units
     await page.goto("/dashboard/units");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     if (!(await page.locator("text=404").isVisible().catch(() => false))) {
       console.log("✓ Units page accessible");
@@ -218,12 +218,12 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Navigate to dashboard
     await page.goto(URLS.dashboard);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     console.log("✓ Departmental Admin signed in");
 
     // Navigate to services
     await page.goto("/dashboard/services");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Check if service exists or create one
     const existingService = page.locator(`text=${TEST_DATA.service.name}`);
@@ -242,7 +242,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
         const submitButton = page.locator("button[type='submit'], button:has-text('Save')");
         await submitButton.first().click();
-        await page.waitForLoadState("networkidle");
+        await page.waitForLoadState("domcontentloaded");
 
         console.log("✓ Service created");
       }
@@ -252,7 +252,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Navigate to providers
     await page.goto("/dashboard/providers");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Check if provider exists or create one
     const existingProvider = page.locator(`text=${TEST_DATA.provider.lastName}`);
@@ -276,7 +276,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
         const submitButton = page.locator("button[type='submit'], button:has-text('Save')");
         await submitButton.first().click();
-        await page.waitForLoadState("networkidle");
+        await page.waitForLoadState("domcontentloaded");
 
         console.log("✓ Provider created");
       }
@@ -286,14 +286,14 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Navigate to matching
     await page.goto("/dashboard/matching");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     console.log("✓ Matching page loaded");
 
     // Try to run matching if positions exist
     const runMatchButton = page.locator("button:has-text('Run'), button:has-text('Match'), button:has-text('Find')");
     if (await runMatchButton.first().isVisible()) {
       await runMatchButton.first().click();
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
       await page.waitForTimeout(1000);
       console.log("✓ Matching algorithm executed");
     }
@@ -302,13 +302,13 @@ test.describe.serial("Complete Organizational Workflow", () => {
     const assignButton = page.locator("button:has-text('Assign')");
     if (await assignButton.first().isVisible()) {
       await assignButton.first().click();
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
       console.log("✓ Assignment created");
     }
 
     // Navigate to coverage
     await page.goto("/dashboard/coverage");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     console.log("✓ Coverage dashboard loaded");
 
     // Verify coverage stats are visible
@@ -331,7 +331,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/hospitals");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const deptAdminHospitalsAccess = page.url();
     if (!deptAdminHospitalsAccess.includes("hospitals")) {
@@ -347,7 +347,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
     await signInAs(page, HOSPITAL_ADMIN.email, HOSPITAL_ADMIN.password);
 
     await page.goto("/dashboard/health-systems");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const hospAdminHSAccess = page.url();
     if (!hospAdminHSAccess.includes("health-systems")) {
@@ -370,7 +370,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     for (const pagePath of pagesForSuperAdmin) {
       await page.goto(pagePath);
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
 
       const notFound = page.locator("text=404, text=Not Found, text=Access Denied");
       const isBlocked = await notFound.first().isVisible().catch(() => false);
@@ -393,7 +393,7 @@ test.describe.serial("Complete Organizational Workflow", () => {
 
     // Go to coverage page
     await page.goto("/dashboard/coverage");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Take a screenshot of the coverage dashboard
     await page.screenshot({
@@ -435,7 +435,7 @@ test.describe("Cross-Role Security Tests", () => {
 
     // Try to access hospitals directly
     await page.goto("/dashboard/hospitals");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Should be redirected or see limited view
     const url = page.url();
@@ -451,7 +451,7 @@ test.describe("Cross-Role Security Tests", () => {
 
     // Try to access health systems directly
     await page.goto("/dashboard/health-systems");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const url = page.url();
     const accessDenied = page.locator("text=Access Denied, text=Unauthorized");
@@ -465,7 +465,7 @@ test.describe("Cross-Role Security Tests", () => {
     await signInAs(page, HOSPITAL_ADMIN.email, HOSPITAL_ADMIN.password);
 
     await page.goto("/dashboard/users");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const createButton = page.locator("button:has-text('Create'), button:has-text('Add'), button:has-text('Invite')");
 

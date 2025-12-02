@@ -23,26 +23,42 @@ export const getOpenPositions = query({
 
     let positions;
 
+    // Only include ACTIVE positions (inactive positions from deactivated shifts are excluded)
     if (args.departmentId) {
       const departmentId = args.departmentId;
       positions = await ctx.db
         .query("job_positions")
         .withIndex("by_department", (q) => q.eq("departmentId", departmentId))
-        .filter((q) => q.eq(q.field("status"), "Open"))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("status"), "Open"),
+            q.eq(q.field("isActive"), true)
+          )
+        )
         .collect();
     } else if (args.hospitalId) {
       const hospitalId = args.hospitalId;
       positions = await ctx.db
         .query("job_positions")
         .withIndex("by_hospital", (q) => q.eq("hospitalId", hospitalId))
-        .filter((q) => q.eq(q.field("status"), "Open"))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("status"), "Open"),
+            q.eq(q.field("isActive"), true)
+          )
+        )
         .collect();
     } else if (currentUser.departmentId) {
       const departmentId = currentUser.departmentId;
       positions = await ctx.db
         .query("job_positions")
         .withIndex("by_department", (q) => q.eq("departmentId", departmentId))
-        .filter((q) => q.eq(q.field("status"), "Open"))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("status"), "Open"),
+            q.eq(q.field("isActive"), true)
+          )
+        )
         .collect();
     } else {
       return [];
@@ -77,7 +93,8 @@ export const findMatchesForPosition = query({
   args: { jobPositionId: v.id("job_positions") },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobPositionId);
-    if (!job || job.status !== "Open") return [];
+    // Only match for active, open positions
+    if (!job || job.status !== "Open" || !job.isActive) return [];
 
     // Get required skills for this position
     const serviceJobType = await ctx.db.get(job.serviceJobTypeId);
@@ -102,13 +119,21 @@ export const findMatchesForPosition = query({
     const results = [];
 
     for (const provider of providers) {
-      // Check if already assigned
-      const existingAssignment = await ctx.db
+      // Check for shift conflict - provider can work multiple positions but NOT in the same shift
+      const shiftConflict = await ctx.db
         .query("assignments")
-        .withIndex("by_provider_status", (q) => q.eq("providerId", provider._id).eq("status", "Active"))
+        .withIndex("by_provider_shift", (q) =>
+          q.eq("providerId", provider._id).eq("shiftId", job.shiftId)
+        )
+        .filter((q) =>
+          q.or(
+            q.eq(q.field("status"), "Active"),
+            q.eq(q.field("status"), "Confirmed")
+          )
+        )
         .first();
 
-      if (existingAssignment) continue;
+      if (shiftConflict) continue;
 
       // Check hospital access
       const canWork = await canProviderWorkAtHospital(ctx, provider._id, job.hospitalId, provider.hospitalId);
@@ -246,15 +271,23 @@ export const createAssignment = mutation({
       throw new Error("Position is not open");
     }
 
-    // Check provider not already assigned
-    const existingProviderAssignment = await ctx.db
+    // Check for shift conflict - provider can work multiple positions but NOT in the same shift
+    const shiftConflict = await ctx.db
       .query("assignments")
-      .withIndex("by_provider_status", (q) => q.eq("providerId", args.providerId).eq("status", "Active"))
+      .withIndex("by_provider_shift", (q) =>
+        q.eq("providerId", args.providerId).eq("shiftId", job.shiftId)
+      )
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("status"), "Active"),
+          q.eq(q.field("status"), "Confirmed")
+        )
+      )
       .first();
 
-    if (existingProviderAssignment) {
-      const existingJob = await ctx.db.get(existingProviderAssignment.jobPositionId);
-      throw new Error(`Provider already assigned to ${existingJob?.jobCode || "another position"}`);
+    if (shiftConflict) {
+      const shift = await ctx.db.get(job.shiftId);
+      throw new Error(`Provider already assigned to another position in ${shift?.shiftType || "this shift"}`);
     }
 
     // Check job not already filled

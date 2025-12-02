@@ -27,7 +27,12 @@ export const create = mutation({
       v.object({
         jobTypeId: v.id("job_types"),
         skillIds: v.array(v.id("skills")),
-        headcount: v.number(), // positions per shift
+        headcount: v.number(), // default positions per shift
+        // Per-shift-type headcount (optional - falls back to headcount)
+        weekdayAmHeadcount: v.optional(v.number()),
+        weekdayPmHeadcount: v.optional(v.number()),
+        weekendAmHeadcount: v.optional(v.number()),
+        weekendPmHeadcount: v.optional(v.number()),
         // Per-job-type shift configuration (optional - falls back to service defaults)
         operatesDays: v.optional(v.boolean()),
         operatesNights: v.optional(v.boolean()),
@@ -90,6 +95,11 @@ export const create = mutation({
         operatesDays: jtConfig.operatesDays,
         operatesNights: jtConfig.operatesNights,
         headcount: jtConfig.headcount,
+        // Per-shift-type headcount
+        weekdayAmHeadcount: jtConfig.weekdayAmHeadcount,
+        weekdayPmHeadcount: jtConfig.weekdayPmHeadcount,
+        weekendAmHeadcount: jtConfig.weekendAmHeadcount,
+        weekendPmHeadcount: jtConfig.weekendPmHeadcount,
       });
 
       // Create skills for this job type
@@ -104,7 +114,7 @@ export const create = mutation({
       // Determine which shifts to create based on operating hours
       // Per-job-type config overrides service-level settings
       // Shift types per PRD: Weekday_AM, Weekday_PM, Weekend_AM, Weekend_PM
-      const shiftsToCreate: { shiftType: string; name: string; start: string; end: string }[] = [];
+      const shiftsToCreate: { shiftType: string; name: string; start: string; end: string; headcount: number }[] = [];
 
       // Use per-job-type shift times if provided, otherwise fall back to service defaults
       const dayStart = jtConfig.dayShiftStart ?? args.shiftConfig.dayShiftStart;
@@ -116,12 +126,24 @@ export const create = mutation({
       const operatesDays = jtConfig.operatesDays ?? args.operatesDays;
       const operatesNights = jtConfig.operatesNights ?? args.operatesNights;
 
+      // Helper to get headcount for a shift type (falls back to default headcount)
+      const getHeadcount = (shiftType: string): number => {
+        switch (shiftType) {
+          case "Weekday_AM": return jtConfig.weekdayAmHeadcount ?? jtConfig.headcount;
+          case "Weekday_PM": return jtConfig.weekdayPmHeadcount ?? jtConfig.headcount;
+          case "Weekend_AM": return jtConfig.weekendAmHeadcount ?? jtConfig.headcount;
+          case "Weekend_PM": return jtConfig.weekendPmHeadcount ?? jtConfig.headcount;
+          default: return jtConfig.headcount;
+        }
+      };
+
       if (operatesDays) {
         shiftsToCreate.push({
           shiftType: "Weekday_AM",
           name: "Weekday Day Shift",
           start: dayStart,
           end: dayEnd,
+          headcount: getHeadcount("Weekday_AM"),
         });
       }
 
@@ -131,6 +153,7 @@ export const create = mutation({
           name: "Weekday Night Shift",
           start: nightStart,
           end: nightEnd,
+          headcount: getHeadcount("Weekday_PM"),
         });
       }
 
@@ -140,6 +163,7 @@ export const create = mutation({
           name: "Weekend Day Shift",
           start: dayStart,
           end: dayEnd,
+          headcount: getHeadcount("Weekend_AM"),
         });
       }
 
@@ -149,6 +173,7 @@ export const create = mutation({
           name: "Weekend Night Shift",
           start: nightStart,
           end: nightEnd,
+          headcount: getHeadcount("Weekend_PM"),
         });
       }
 
@@ -161,14 +186,14 @@ export const create = mutation({
           shiftType: shiftInfo.shiftType,
           startTime: shiftInfo.start,
           endTime: shiftInfo.end,
-          positionsNeeded: jtConfig.headcount,
+          positionsNeeded: shiftInfo.headcount,
           isActive: true,
         });
 
         shiftsCreated++;
 
         // Create job positions for each headcount
-        for (let i = 1; i <= jtConfig.headcount; i++) {
+        for (let i = 1; i <= shiftInfo.headcount; i++) {
           const jobCode = generateJobCode(
             department.name,
             hospital.shortCode,
@@ -377,7 +402,8 @@ export const getWithDetails = query({
 });
 
 /**
- * Update a service
+ * Update a service (basic info)
+ * When operating modes change (day/night/weekend), soft-delete/reactivate affected shifts
  */
 export const update = mutation({
   args: {
@@ -388,12 +414,82 @@ export const update = mutation({
     dayCapacity: v.optional(v.number()),
     nightCapacity: v.optional(v.number()),
     weekendCapacity: v.optional(v.number()),
+    // Shift times
+    dayShiftStart: v.optional(v.string()),
+    dayShiftEnd: v.optional(v.string()),
+    nightShiftStart: v.optional(v.string()),
+    nightShiftEnd: v.optional(v.string()),
+    // Operating flags
+    operatesDays: v.optional(v.boolean()),
+    operatesNights: v.optional(v.boolean()),
+    operatesWeekends: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const service = await ctx.db.get(args.serviceId);
     if (!service) throw new Error("Service not found");
 
     const user = await requireDepartmentAccess(ctx, service.departmentId);
+
+    // Check for operating mode changes to soft-delete/reactivate shifts
+    const newOperatesDays = args.operatesDays ?? service.operatesDays;
+    const newOperatesNights = args.operatesNights ?? service.operatesNights;
+    const newOperatesWeekends = args.operatesWeekends ?? service.operatesWeekends;
+
+    // Get all shifts for this service
+    const shifts = await ctx.db
+      .query("shifts")
+      .withIndex("by_service", (q) => q.eq("serviceId", args.serviceId))
+      .collect();
+
+    let shiftsDeactivated = 0;
+    let shiftsReactivated = 0;
+
+    for (const shift of shifts) {
+      // Determine if this shift should be active based on new operating modes
+      const shiftType = shift.shiftType;
+      let shouldBeActive = false;
+
+      if (shiftType === "Weekday_AM") {
+        shouldBeActive = newOperatesDays;
+      } else if (shiftType === "Weekday_PM") {
+        shouldBeActive = newOperatesNights;
+      } else if (shiftType === "Weekend_AM") {
+        shouldBeActive = newOperatesWeekends && newOperatesDays;
+      } else if (shiftType === "Weekend_PM") {
+        shouldBeActive = newOperatesWeekends && newOperatesNights;
+      }
+
+      // If shift's active status needs to change, update it and its positions
+      if (shift.isActive !== shouldBeActive) {
+        await ctx.db.patch(shift._id, { isActive: shouldBeActive });
+
+        // Update positions for this shift
+        const positions = await ctx.db
+          .query("job_positions")
+          .withIndex("by_shift", (q) => q.eq("shiftId", shift._id))
+          .collect();
+
+        for (const pos of positions) {
+          if (shouldBeActive) {
+            // Reactivating - restore cancelled positions to Open
+            if (pos.status === "Cancelled") {
+              await ctx.db.patch(pos._id, { status: "Open", isActive: true });
+            } else {
+              await ctx.db.patch(pos._id, { isActive: true });
+            }
+          } else {
+            // Deactivating - mark positions inactive but keep status for history
+            await ctx.db.patch(pos._id, { isActive: false });
+          }
+        }
+
+        if (shouldBeActive) {
+          shiftsReactivated++;
+        } else {
+          shiftsDeactivated++;
+        }
+      }
+    }
 
     await ctx.db.patch(args.serviceId, {
       name: args.name,
@@ -402,13 +498,203 @@ export const update = mutation({
       dayCapacity: args.dayCapacity,
       nightCapacity: args.nightCapacity,
       weekendCapacity: args.weekendCapacity,
+      ...(args.dayShiftStart !== undefined && { dayShiftStart: args.dayShiftStart }),
+      ...(args.dayShiftEnd !== undefined && { dayShiftEnd: args.dayShiftEnd }),
+      ...(args.nightShiftStart !== undefined && { nightShiftStart: args.nightShiftStart }),
+      ...(args.nightShiftEnd !== undefined && { nightShiftEnd: args.nightShiftEnd }),
+      ...(args.operatesDays !== undefined && { operatesDays: args.operatesDays }),
+      ...(args.operatesNights !== undefined && { operatesNights: args.operatesNights }),
+      ...(args.operatesWeekends !== undefined && { operatesWeekends: args.operatesWeekends }),
     });
 
     await auditLog(ctx, user, "UPDATE", "SERVICE", args.serviceId, {
       name: args.name,
+      shiftsDeactivated,
+      shiftsReactivated,
     });
 
-    return { success: true };
+    return { success: true, shiftsDeactivated, shiftsReactivated };
+  },
+});
+
+/**
+ * Update shift headcount and optionally regenerate positions
+ */
+export const updateShift = mutation({
+  args: {
+    shiftId: v.id("shifts"),
+    positionsNeeded: v.number(),
+    startTime: v.optional(v.string()),
+    endTime: v.optional(v.string()),
+    regeneratePositions: v.boolean(), // If true, adjusts job positions to match new headcount
+  },
+  handler: async (ctx, args) => {
+    const shift = await ctx.db.get(args.shiftId);
+    if (!shift) throw new Error("Shift not found");
+
+    const service = await ctx.db.get(shift.serviceId);
+    if (!service) throw new Error("Service not found");
+
+    const user = await requireDepartmentAccess(ctx, service.departmentId);
+
+    const oldPositionsNeeded = shift.positionsNeeded;
+
+    // Update shift
+    await ctx.db.patch(args.shiftId, {
+      positionsNeeded: args.positionsNeeded,
+      ...(args.startTime && { startTime: args.startTime }),
+      ...(args.endTime && { endTime: args.endTime }),
+    });
+
+    let positionsAdded = 0;
+    let positionsRemoved = 0;
+
+    if (args.regeneratePositions) {
+      const department = await ctx.db.get(service.departmentId);
+      const hospital = await ctx.db.get(service.hospitalId);
+      const serviceJobType = await ctx.db.get(shift.serviceJobTypeId);
+      const jobType = serviceJobType ? await ctx.db.get(serviceJobType.jobTypeId) : null;
+
+      // Get current positions for this shift
+      const existingPositions = await ctx.db
+        .query("job_positions")
+        .withIndex("by_shift", (q) => q.eq("shiftId", args.shiftId))
+        .filter((q) => q.eq(q.field("isActive"), true))
+        .collect();
+
+      const currentCount = existingPositions.length;
+
+      if (args.positionsNeeded > currentCount) {
+        // Need to add positions
+        for (let i = currentCount + 1; i <= args.positionsNeeded; i++) {
+          const jobCode = generateJobCode(
+            department?.name || "DEPT",
+            hospital?.shortCode || "HOSP",
+            service.shortCode,
+            jobType?.code || "JT",
+            shift.shiftType,
+            i
+          );
+
+          await ctx.db.insert("job_positions", {
+            shiftId: args.shiftId,
+            serviceJobTypeId: shift.serviceJobTypeId,
+            serviceId: shift.serviceId,
+            hospitalId: service.hospitalId,
+            departmentId: service.departmentId,
+            jobCode,
+            positionNumber: i,
+            status: "Open",
+            isActive: true,
+          });
+          positionsAdded++;
+        }
+      } else if (args.positionsNeeded < currentCount) {
+        // Need to remove positions (cancel unassigned first, then remove from end)
+        const sortedPositions = existingPositions.sort((a, b) => b.positionNumber - a.positionNumber);
+        const toRemove = currentCount - args.positionsNeeded;
+
+        for (let i = 0; i < toRemove && i < sortedPositions.length; i++) {
+          const pos = sortedPositions[i];
+          if (pos.status === "Open") {
+            await ctx.db.patch(pos._id, { status: "Cancelled", isActive: false });
+            positionsRemoved++;
+          }
+        }
+      }
+    }
+
+    // Update service_job_type per-shift headcount
+    const serviceJobType = await ctx.db.get(shift.serviceJobTypeId);
+    if (serviceJobType) {
+      const headcountField = {
+        "Weekday_AM": "weekdayAmHeadcount",
+        "Weekday_PM": "weekdayPmHeadcount",
+        "Weekend_AM": "weekendAmHeadcount",
+        "Weekend_PM": "weekendPmHeadcount",
+      }[shift.shiftType];
+
+      if (headcountField) {
+        await ctx.db.patch(shift.serviceJobTypeId, {
+          [headcountField]: args.positionsNeeded,
+        });
+      }
+    }
+
+    await auditLog(ctx, user, "UPDATE", "SHIFT", args.shiftId, {
+      shiftType: shift.shiftType,
+      oldPositionsNeeded,
+      newPositionsNeeded: args.positionsNeeded,
+      positionsAdded,
+      positionsRemoved,
+    });
+
+    return {
+      success: true,
+      positionsAdded,
+      positionsRemoved,
+      totalPositions: args.positionsNeeded,
+    };
+  },
+});
+
+/**
+ * Toggle a shift's active status (soft delete/reactivate)
+ * When deactivating, positions are marked inactive and won't count in matching
+ * When reactivating, positions are restored
+ */
+export const toggleShiftActive = mutation({
+  args: {
+    shiftId: v.id("shifts"),
+  },
+  handler: async (ctx, args) => {
+    const shift = await ctx.db.get(args.shiftId);
+    if (!shift) throw new Error("Shift not found");
+
+    const service = await ctx.db.get(shift.serviceId);
+    if (!service) throw new Error("Service not found");
+
+    const user = await requireDepartmentAccess(ctx, service.departmentId);
+
+    const newStatus = !shift.isActive;
+
+    // Update shift status
+    await ctx.db.patch(args.shiftId, { isActive: newStatus });
+
+    // Update all positions for this shift
+    const positions = await ctx.db
+      .query("job_positions")
+      .withIndex("by_shift", (q) => q.eq("shiftId", args.shiftId))
+      .collect();
+
+    for (const pos of positions) {
+      if (newStatus) {
+        // Reactivating - restore Open positions
+        if (pos.status === "Cancelled") {
+          await ctx.db.patch(pos._id, { status: "Open", isActive: true });
+        }
+      } else {
+        // Deactivating - mark positions inactive (but keep their status for tracking)
+        await ctx.db.patch(pos._id, { isActive: false });
+      }
+    }
+
+    await auditLog(
+      ctx,
+      user,
+      newStatus ? "ACTIVATE" : "DEACTIVATE",
+      "SHIFT",
+      args.shiftId,
+      {
+        shiftType: shift.shiftType,
+        positionsAffected: positions.length,
+      }
+    );
+
+    return {
+      isActive: newStatus,
+      positionsAffected: positions.length,
+    };
   },
 });
 

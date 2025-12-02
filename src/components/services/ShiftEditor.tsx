@@ -30,20 +30,20 @@ export default function ShiftEditor({
     null
   );
 
-  const getShiftTimes = (shiftType: ShiftType): { start: string; end: string } => {
+  const getShiftTimes = (shiftType: ShiftType): { startTime: string; endTime: string } => {
     const config = shiftConfig[shiftType];
     if (config?.customTimes) {
       return {
-        start: config.customTimes.startTime,
-        end: config.customTimes.endTime,
+        startTime: config.customTimes.startTime,
+        endTime: config.customTimes.endTime,
       };
     }
 
     // Use default times based on shift type
     if (shiftType === "Weekday_AM" || shiftType === "Weekend_AM") {
-      return { start: defaultDayStart, end: defaultDayEnd };
+      return { startTime: defaultDayStart, endTime: defaultDayEnd };
     } else {
-      return { start: defaultNightStart, end: defaultNightEnd };
+      return { startTime: defaultNightStart, endTime: defaultNightEnd };
     }
   };
 
@@ -152,7 +152,7 @@ export default function ShiftEditor({
               <div className="mt-2 flex items-center gap-2">
                 <input
                   type="time"
-                  value={times.start}
+                  value={times.startTime}
                   onChange={(e) =>
                     handleCustomTimeChange(shiftType, "startTime", e.target.value)
                   }
@@ -161,7 +161,7 @@ export default function ShiftEditor({
                 <span className="text-slate-400">-</span>
                 <input
                   type="time"
-                  value={times.end}
+                  value={times.endTime}
                   onChange={(e) =>
                     handleCustomTimeChange(shiftType, "endTime", e.target.value)
                   }
@@ -185,7 +185,7 @@ export default function ShiftEditor({
             ) : (
               <div className="text-sm text-slate-400 flex items-center gap-2">
                 <span>
-                  {times.start} - {times.end}
+                  {times.startTime} - {times.endTime}
                 </span>
                 {config.enabled && (
                   <button

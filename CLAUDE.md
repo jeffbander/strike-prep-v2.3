@@ -156,7 +156,83 @@ npx playwright test tests/01-super-admin.spec.ts
 
 # Convex dev (backend)
 npx convex dev
+
+# Push Convex changes once (without watching)
+npx convex dev --once
 ```
+
+---
+
+## CRITICAL: Convex Deployment
+
+**ALWAYS run `npx convex dev --once` after modifying any files in the `convex/` directory!**
+
+The Convex backend runs separately from Next.js. Changes to Convex functions (mutations, queries, actions) are NOT automatically deployed. You must:
+
+1. Make changes to files in `convex/`
+2. Run `npx convex dev --once` to push changes to the backend
+3. Verify no TypeScript errors block deployment
+4. Test the changes in the browser
+
+**Common symptoms of forgetting this:**
+- "Could not find public function for 'moduleName:functionName'"
+- New mutations/queries not available on the client
+- Old function behavior persists after code changes
+
+**TypeScript Errors Block Deployment:**
+If there are TypeScript errors anywhere in the `convex/` directory, the deployment will fail. Fix ALL TypeScript errors before pushing.
+
+---
+
+## Security Best Practices
+
+### Backend Security (Convex)
+
+1. **Always use `requireAuth()` or `requireDepartmentAccess()`** in mutations/queries that modify or access sensitive data:
+   ```typescript
+   // In convex/services.ts
+   const user = await requireDepartmentAccess(ctx, departmentId);
+   ```
+
+2. **Role-based authorization is enforced in the BACKEND**, not just frontend. Never trust the client.
+
+3. **Scope validation**: Users should only access data within their scope:
+   - `super_admin`: All data
+   - `health_system_admin`: Only their health system's data
+   - `hospital_admin`: Only their hospital's data
+   - `departmental_admin`: Only their department's data
+
+4. **Audit logging**: All significant actions should be logged:
+   ```typescript
+   await auditLog(ctx, user, "ACTION_TYPE", "RESOURCE_TYPE", resourceId, { details });
+   ```
+
+5. **Soft delete pattern**: Use `isActive: false` instead of hard deletes to maintain audit trails and allow recovery.
+
+### Frontend Security
+
+1. **SSR Safety**: Always check `typeof window !== "undefined"` before accessing:
+   - `localStorage`
+   - `sessionStorage`
+   - `window` object
+
+2. **Role checks in UI**: Hide admin-only features based on `currentUser?.role`, but remember the backend enforces the actual security.
+
+3. **Input validation**: Validate all user inputs on both frontend (for UX) and backend (for security).
+
+### Data Integrity
+
+1. **Cascade operations**: When deactivating parent entities, cascade to children using `convex/lib/cascade.ts`
+
+2. **Active filtering**: Matching and statistics should only count `isActive: true` positions/shifts:
+   ```typescript
+   .filter((q) => q.and(
+     q.eq(q.field("status"), "Open"),
+     q.eq(q.field("isActive"), true)
+   ))
+   ```
+
+3. **Referential integrity**: Check that referenced entities exist before creating/updating records.
 
 ---
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import Link from "next/link";
@@ -27,6 +27,20 @@ export default function CoverageDashboardPage() {
   const filteredDepartments = selectedHospitalId
     ? departments?.filter((d) => d.hospitalId === selectedHospitalId)
     : departments;
+
+  // Auto-select hospital if only one option
+  useEffect(() => {
+    if (hospitals && hospitals.length === 1 && !selectedHospitalId) {
+      setSelectedHospitalId(hospitals[0]._id);
+    }
+  }, [hospitals, selectedHospitalId]);
+
+  // Auto-select department if only one option
+  useEffect(() => {
+    if (filteredDepartments && filteredDepartments.length === 1 && !selectedDepartmentId) {
+      setSelectedDepartmentId(filteredDepartments[0]._id);
+    }
+  }, [filteredDepartments, selectedDepartmentId]);
 
   // Calculate coverage percentage
   const coveragePercent = coverageStats

@@ -8,12 +8,14 @@
  * @module
  */
 
+import type * as auditLogs from "../auditLogs.js";
 import type * as departments from "../departments.js";
 import type * as exports from "../exports.js";
 import type * as healthSystems from "../healthSystems.js";
 import type * as hospitals from "../hospitals.js";
 import type * as jobTypes from "../jobTypes.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_cascade from "../lib/cascade.js";
 import type * as lib_deletion from "../lib/deletion.js";
 import type * as matching from "../matching.js";
 import type * as providers from "../providers.js";
@@ -30,12 +32,14 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auditLogs: typeof auditLogs;
   departments: typeof departments;
   exports: typeof exports;
   healthSystems: typeof healthSystems;
   hospitals: typeof hospitals;
   jobTypes: typeof jobTypes;
   "lib/auth": typeof lib_auth;
+  "lib/cascade": typeof lib_cascade;
   "lib/deletion": typeof lib_deletion;
   matching: typeof matching;
   providers: typeof providers;

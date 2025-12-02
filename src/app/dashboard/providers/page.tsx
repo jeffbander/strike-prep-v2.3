@@ -17,6 +17,7 @@ export default function ProvidersPage() {
   const providers = useQuery(api.providers.list, {});
   const createProvider = useMutation(api.providers.create);
   const bulkCreateProviders = useMutation(api.providers.bulkCreateWithIds);
+  const bulkCreateFromCSV = useMutation(api.providers.bulkCreate);
   const addSkill = useMutation(api.providers.addSkill);
   const removeSkill = useMutation(api.providers.removeSkill);
   const updateProvider = useMutation(api.providers.update);
@@ -26,11 +27,16 @@ export default function ProvidersPage() {
 
   const [isCreating, setIsCreating] = useState(false);
   const [isBulkUpload, setIsBulkUpload] = useState(false);
+  const [isCSVUpload, setIsCSVUpload] = useState(false);
+  const [csvUploadDepartmentId, setCSVUploadDepartmentId] = useState("");
+  const [csvPreviewData, setCSVPreviewData] = useState<any[] | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const [selectedHospitalFilter, setSelectedHospitalFilter] = useState("");
   const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const csvFileInputRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState({
     firstName: "",
@@ -165,6 +171,100 @@ export default function ProvidersPage() {
     }
   };
 
+  // PRD-specified 12-column CSV format handler
+  const handleCSVFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet) as any[];
+
+      // Map the 12-column PRD format
+      // Role,Last Name,First Name,Life #,Employee Cell #,Current Schedule (days),Current Schedule[Time],Home Site,Home Department,If APP Supervising MD/Collaborating MD,Does NP/PA have specialty certification? If yes name certification,Previous experience if known
+      const mappedData = jsonData.map((row, index) => ({
+        rowNum: index + 2, // +2 for 1-indexed and header row
+        role: row["Role"] || row["role"] || "",
+        lastName: row["Last Name"] || row["lastName"] || "",
+        firstName: row["First Name"] || row["firstName"] || "",
+        employeeId: row["Life #"] || row["employeeId"] || row["Employee ID"] || "",
+        cellPhone: row["Employee Cell #"] || row["cellPhone"] || row["Phone"] || "",
+        scheduleDays: row["Current Schedule (days)"] || row["scheduleDays"] || "",
+        scheduleTime: row["Current Schedule[Time]"] || row["scheduleTime"] || "",
+        homeSite: row["Home Site"] || row["homeSite"] || "",
+        homeDepartment: row["Home Department"] || row["homeDepartment"] || "",
+        supervisingMD: row["If APP Supervising MD/Collaborating MD"] || row["supervisingMD"] || "",
+        certification: row["Does NP/PA have specialty certification? If yes name certification"] || row["certification"] || "",
+        experience: row["Previous experience if known"] || row["experience"] || "",
+      }));
+
+      // Filter out empty rows
+      const validRows = mappedData.filter(
+        (row) => row.role && row.lastName && row.firstName && row.homeSite && row.homeDepartment
+      );
+
+      if (validRows.length === 0) {
+        toast.error("No valid rows found. Ensure columns match the expected format.");
+        return;
+      }
+
+      setCSVPreviewData(validRows);
+    } catch (error: any) {
+      toast.error(`Failed to parse file: ${error.message}`);
+    }
+  };
+
+  const handleCSVUploadConfirm = async () => {
+    if (!csvPreviewData || !csvUploadDepartmentId) {
+      toast.error("Please select a department and upload a file first.");
+      return;
+    }
+
+    setIsUploading(true);
+
+    try {
+      const result = await bulkCreateFromCSV({
+        departmentId: csvUploadDepartmentId as Id<"departments">,
+        providers: csvPreviewData.map((row) => ({
+          role: row.role,
+          lastName: row.lastName,
+          firstName: row.firstName,
+          employeeId: row.employeeId || undefined,
+          cellPhone: row.cellPhone || undefined,
+          scheduleDays: row.scheduleDays || undefined,
+          scheduleTime: row.scheduleTime || undefined,
+          homeSite: row.homeSite,
+          homeDepartment: row.homeDepartment,
+          supervisingMD: row.supervisingMD || undefined,
+          certification: row.certification || undefined,
+          experience: row.experience || undefined,
+        })),
+      });
+
+      const successMessage = `Created ${result.created} providers`;
+      const errorMessage = result.errors.length > 0 ? ` (${result.errors.length} errors)` : "";
+      toast.success(successMessage + errorMessage);
+
+      if (result.errors.length > 0) {
+        console.log("Upload errors:", result.errors);
+      }
+
+      // Reset state
+      setIsCSVUpload(false);
+      setCSVPreviewData(null);
+      setCSVUploadDepartmentId("");
+      if (csvFileInputRef.current) {
+        csvFileInputRef.current.value = "";
+      }
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleAddSkill = async (providerId: string, skillId: string) => {
     try {
       await addSkill({
@@ -285,10 +385,16 @@ export default function ProvidersPage() {
           </div>
           <div className="flex gap-2">
             <button
+              onClick={() => setIsCSVUpload(true)}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+            >
+              CSV Upload (12-col)
+            </button>
+            <button
               onClick={() => setIsBulkUpload(true)}
               className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
             >
-              Bulk Upload
+              Quick Upload
             </button>
             <button
               onClick={() => setIsCreating(true)}
@@ -299,10 +405,134 @@ export default function ProvidersPage() {
           </div>
         </div>
 
-        {/* Bulk Upload Modal */}
+        {/* CSV Upload Modal (12-column PRD format) */}
+        {isCSVUpload && (
+          <div className="bg-slate-800 rounded-lg p-6 mb-6">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h2 className="text-xl font-semibold">CSV Upload (12-Column Format)</h2>
+                <p className="text-slate-400 text-sm mt-1">
+                  Upload providers using the standard 12-column format from the PRD
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setIsCSVUpload(false);
+                  setCSVPreviewData(null);
+                  setCSVUploadDepartmentId("");
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Format Guide */}
+            <div className="bg-slate-700/50 rounded p-4 mb-4">
+              <h3 className="text-sm font-medium mb-2">Expected CSV Columns:</h3>
+              <p className="text-xs text-slate-400 font-mono break-all">
+                Role, Last Name, First Name, Life #, Employee Cell #, Current Schedule (days), Current Schedule[Time], Home Site, Home Department, If APP Supervising MD/Collaborating MD, Does NP/PA have specialty certification? If yes name certification, Previous experience if known
+              </p>
+              <p className="text-xs text-slate-400 mt-2">
+                <strong>Required:</strong> Role, Last Name, First Name, Home Site, Home Department
+              </p>
+            </div>
+
+            {/* Department Selection */}
+            <div className="mb-4">
+              <label className="block text-sm text-slate-400 mb-1">Target Department (for scope validation)</label>
+              <select
+                value={csvUploadDepartmentId}
+                onChange={(e) => setCSVUploadDepartmentId(e.target.value)}
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+              >
+                <option value="">Select Department...</option>
+                {departments?.map((d) => (
+                  <option key={d._id} value={d._id}>
+                    {d.name} ({hospitals?.find((h) => h._id === d.hospitalId)?.shortCode})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* File Upload */}
+            <div className="mb-4">
+              <input
+                ref={csvFileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleCSVFileSelect}
+                className="block w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700"
+              />
+            </div>
+
+            {/* Preview Table */}
+            {csvPreviewData && csvPreviewData.length > 0 && (
+              <div className="mb-4">
+                <h3 className="text-sm font-medium mb-2">Preview ({csvPreviewData.length} rows)</h3>
+                <div className="max-h-64 overflow-auto rounded border border-slate-600">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-700 sticky top-0">
+                      <tr>
+                        <th className="px-2 py-1 text-left">#</th>
+                        <th className="px-2 py-1 text-left">Role</th>
+                        <th className="px-2 py-1 text-left">Name</th>
+                        <th className="px-2 py-1 text-left">Home Site</th>
+                        <th className="px-2 py-1 text-left">Department</th>
+                        <th className="px-2 py-1 text-left">Schedule</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-700">
+                      {csvPreviewData.slice(0, 10).map((row, i) => (
+                        <tr key={i} className="hover:bg-slate-700/50">
+                          <td className="px-2 py-1 text-slate-400">{row.rowNum}</td>
+                          <td className="px-2 py-1">{row.role}</td>
+                          <td className="px-2 py-1">{row.firstName} {row.lastName}</td>
+                          <td className="px-2 py-1">{row.homeSite}</td>
+                          <td className="px-2 py-1">{row.homeDepartment}</td>
+                          <td className="px-2 py-1 text-slate-400 text-xs">
+                            {row.scheduleDays} {row.scheduleTime}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {csvPreviewData.length > 10 && (
+                  <p className="text-slate-400 text-xs mt-1">
+                    Showing 10 of {csvPreviewData.length} rows
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex gap-2">
+              <button
+                onClick={handleCSVUploadConfirm}
+                disabled={!csvPreviewData || !csvUploadDepartmentId || isUploading}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed rounded-lg transition-colors"
+              >
+                {isUploading ? "Uploading..." : `Upload ${csvPreviewData?.length || 0} Providers`}
+              </button>
+              <button
+                onClick={() => {
+                  setIsCSVUpload(false);
+                  setCSVPreviewData(null);
+                  setCSVUploadDepartmentId("");
+                }}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Quick Bulk Upload Modal */}
         {isBulkUpload && (
           <div className="bg-slate-800 rounded-lg p-6 mb-6">
-            <h2 className="text-xl font-semibold mb-4">Bulk Upload Providers</h2>
+            <h2 className="text-xl font-semibold mb-4">Quick Bulk Upload</h2>
             <p className="text-slate-400 mb-4">
               Upload an Excel or CSV file with columns: First Name, Last Name, Email, Phone, Job Type, Hospital, Department, Skills (comma-separated)
             </p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { toast } from "sonner";
@@ -25,6 +25,13 @@ function DepartmentsPageContent() {
     hospitalId: hospitalIdParam || "",
     name: "",
   });
+
+  // Auto-select hospital if only one option (in create form)
+  useEffect(() => {
+    if (hospitals && hospitals.length === 1 && !formData.hospitalId && isCreating) {
+      setFormData((prev) => ({ ...prev, hospitalId: hospitals[0]._id }));
+    }
+  }, [hospitals, formData.hospitalId, isCreating]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();

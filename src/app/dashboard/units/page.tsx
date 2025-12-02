@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { toast } from "sonner";
@@ -11,6 +11,13 @@ export default function UnitsPage() {
   const currentUser = useQuery(api.users.getCurrentUser);
   const hospitals = useQuery(api.hospitals.list, {});
   const [selectedHospitalId, setSelectedHospitalId] = useState<string>("");
+
+  // Auto-select hospital if only one option
+  useEffect(() => {
+    if (hospitals && hospitals.length === 1 && !selectedHospitalId) {
+      setSelectedHospitalId(hospitals[0]._id);
+    }
+  }, [hospitals, selectedHospitalId]);
 
   const units = useQuery(
     api.units.list,

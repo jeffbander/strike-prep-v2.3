@@ -188,8 +188,13 @@ export default defineSchema({
     // Which shifts this job type works (overrides service-level settings)
     operatesDays: v.optional(v.boolean()),
     operatesNights: v.optional(v.boolean()),
-    // Headcount for this job type per shift
+    // Default headcount for this job type per shift (used when per-shift headcount not specified)
     headcount: v.optional(v.number()),
+    // Per-shift-type headcount configuration (e.g., 5 NPs on AM, 3 on Night, 2 on Weekend)
+    weekdayAmHeadcount: v.optional(v.number()),
+    weekdayPmHeadcount: v.optional(v.number()),
+    weekendAmHeadcount: v.optional(v.number()),
+    weekendPmHeadcount: v.optional(v.number()),
   })
     .index("by_service", ["serviceId"])
     .index("by_job_type", ["jobTypeId"]),
@@ -323,6 +328,7 @@ export default defineSchema({
     .index("by_job_position", ["jobPositionId"])
     .index("by_provider", ["providerId"])
     .index("by_provider_status", ["providerId", "status"])
+    .index("by_provider_shift", ["providerId", "shiftId"])
     .index("by_hospital", ["hospitalId"])
     .index("by_department", ["departmentId"])
     .index("by_status", ["status"]),

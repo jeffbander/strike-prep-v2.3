@@ -28,7 +28,7 @@ test.describe("Departmental Admin Journey", () => {
 
   test("should sign in as Departmental Admin", async ({ page }) => {
     await page.goto(URLS.signIn);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Enter credentials
     const emailInput = page.locator("input[name='identifier']");
@@ -57,7 +57,7 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto(URLS.dashboard);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Departmental Admin should NOT see:
     // - "Health Systems" menu
@@ -89,7 +89,7 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/services");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Verify services page loads
     const servicesHeader = page.locator("h1:has-text('Services'), h2:has-text('Services'), text=Service Management");
@@ -115,7 +115,7 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/services");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const createButton = page.locator("button:has-text('Create'), button:has-text('Add'), button:has-text('New')");
 
@@ -171,7 +171,7 @@ test.describe("Departmental Admin Journey", () => {
       const submitButton = page.locator("button[type='submit'], button:has-text('Save'), button:has-text('Create')");
       await submitButton.first().click();
 
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
 
       // Verify service created
       const newService = page.locator(`text=${TEST_DATA.service.name}`);
@@ -189,7 +189,7 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/providers");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Verify providers page loads
     const providersHeader = page.locator("h1:has-text('Providers'), h2:has-text('Providers'), text=Provider");
@@ -212,7 +212,7 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/providers");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const createButton = page.locator("button:has-text('Create'), button:has-text('Add'), button:has-text('New')");
 
@@ -265,7 +265,7 @@ test.describe("Departmental Admin Journey", () => {
       const submitButton = page.locator("button[type='submit'], button:has-text('Save'), button:has-text('Create')");
       await submitButton.first().click();
 
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
 
       // Verify provider created
       const newProvider = page.locator(`text=${TEST_DATA.provider.lastName}`);
@@ -281,7 +281,7 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/matching");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Verify matching page loads
     const matchingHeader = page.locator("h1:has-text('Matching'), h2:has-text('Matching'), text=Provider Matching");
@@ -304,7 +304,7 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/matching");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Select a position to match
     const positionSelector = page.locator("select[name='position'], select[name='jobPosition']");
@@ -318,7 +318,7 @@ test.describe("Departmental Admin Journey", () => {
 
     if (await runMatchingButton.first().isVisible()) {
       await runMatchingButton.first().click();
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
 
       // Wait for results
       await page.waitForTimeout(1000);
@@ -347,14 +347,14 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/matching");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Look for assign button on a match result
     const assignButton = page.locator("button:has-text('Assign'), button:has-text('Create Assignment')");
 
     if (await assignButton.first().isVisible()) {
       await assignButton.first().click();
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
 
       // Verify assignment was created
       const successMessage = page.locator("text=assigned, text=Assignment created, text=Success");
@@ -379,14 +379,14 @@ test.describe("Departmental Admin Journey", () => {
 
     // Navigate to assignments or matching page
     await page.goto("/dashboard/matching");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Look for an assigned position that can be confirmed
     const confirmButton = page.locator("button:has-text('Confirm'), button:has-text('Confirm Assignment')");
 
     if (await confirmButton.first().isVisible()) {
       await confirmButton.first().click();
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("domcontentloaded");
 
       // Verify confirmation
       const confirmedStatus = page.locator("text=Confirmed, [data-status='confirmed']");
@@ -404,7 +404,7 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/coverage");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Verify coverage page loads
     const coverageHeader = page.locator("h1:has-text('Coverage'), h2:has-text('Coverage'), text=Coverage Dashboard");
@@ -435,7 +435,7 @@ test.describe("Departmental Admin Journey", () => {
     await signInAs(page, DEPARTMENTAL_ADMIN.email, DEPARTMENTAL_ADMIN.password);
 
     await page.goto("/dashboard/coverage");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Look for export button
     const exportButton = page.locator("button:has-text('Export'), button:has-text('Download'), button:has-text('Excel')");
@@ -471,7 +471,7 @@ test.describe("Departmental Admin Journey", () => {
 
     // Try to access departments list
     await page.goto("/dashboard/departments");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     const currentUrl = page.url();
 
@@ -502,22 +502,22 @@ test.describe("Departmental Admin - Full Workflow", () => {
 
     // Step 1: Create a service
     await page.goto("/dashboard/services");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     console.log("Step 1: Services page loaded");
 
     // Step 2: Create a provider
     await page.goto("/dashboard/providers");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     console.log("Step 2: Providers page loaded");
 
     // Step 3: Run matching
     await page.goto("/dashboard/matching");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     console.log("Step 3: Matching page loaded");
 
     // Step 4: Check coverage
     await page.goto("/dashboard/coverage");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     console.log("Step 4: Coverage page loaded");
 
     console.log("✓ Full workflow navigation completed");

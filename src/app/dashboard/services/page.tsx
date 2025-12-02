@@ -9,6 +9,7 @@ import { useSearchParams } from "next/navigation";
 import { Id } from "../../../../convex/_generated/dataModel";
 import ServiceWizard from "@/components/services/ServiceWizard";
 import ServiceEditModal from "@/components/services/ServiceEditModal";
+import ServiceStaffingDisplay from "@/components/services/ServiceStaffingDisplay";
 
 function ServicesPageContent() {
   const searchParams = useSearchParams();
@@ -19,6 +20,7 @@ function ServicesPageContent() {
     api.services.list,
     departmentIdParam ? { departmentId: departmentIdParam as Id<"departments"> } : {}
   );
+  const jobTypes = useQuery(api.jobTypes.list, {});
   const toggleService = useMutation(api.services.toggleActive);
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -115,52 +117,26 @@ function ServicesPageContent() {
                     </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-4 text-sm text-slate-400">
-                  <div>
-                    <p className="font-medium text-white">Shift Types</p>
-                    <div className="mt-1 space-y-1">
-                      {service.operatesDays && (
-                        <div className="flex items-center gap-1">
-                          <span className="inline-block w-2 h-2 bg-yellow-500 rounded-full"></span>
-                          <span>Weekday AM: {service.dayShiftStart} - {service.dayShiftEnd}</span>
-                        </div>
-                      )}
-                      {service.operatesNights && (
-                        <div className="flex items-center gap-1">
-                          <span className="inline-block w-2 h-2 bg-indigo-500 rounded-full"></span>
-                          <span>Weekday PM: {service.nightShiftStart} - {service.nightShiftEnd}</span>
-                        </div>
-                      )}
-                      {service.operatesWeekends && service.operatesDays && (
-                        <div className="flex items-center gap-1">
-                          <span className="inline-block w-2 h-2 bg-orange-500 rounded-full"></span>
-                          <span>Weekend AM: {service.dayShiftStart} - {service.dayShiftEnd}</span>
-                        </div>
-                      )}
-                      {service.operatesWeekends && service.operatesNights && (
-                        <div className="flex items-center gap-1">
-                          <span className="inline-block w-2 h-2 bg-purple-500 rounded-full"></span>
-                          <span>Weekend PM: {service.nightShiftStart} - {service.nightShiftEnd}</span>
-                        </div>
-                      )}
+                <div className="grid grid-cols-2 gap-6 text-sm">
+                  <ServiceStaffingDisplay serviceId={service._id} />
+                  <div className="space-y-3">
+                    <div>
+                      <p className="font-medium text-white text-sm">Capacity</p>
+                      <div className="mt-1 space-y-1 text-slate-400">
+                        {service.dayCapacity && <p>Day: {service.dayCapacity} patients</p>}
+                        {service.nightCapacity && <p>Night: {service.nightCapacity} patients</p>}
+                        {service.weekendCapacity && <p>Weekend: {service.weekendCapacity} patients</p>}
+                        {!service.dayCapacity && !service.nightCapacity && !service.weekendCapacity && (
+                          <p className="text-slate-500">Not specified</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <p className="font-medium text-white">Capacity</p>
-                    <div className="mt-1 space-y-1">
-                      {service.dayCapacity && <p>Day: {service.dayCapacity}</p>}
-                      {service.nightCapacity && <p>Night: {service.nightCapacity}</p>}
-                      {service.weekendCapacity && <p>Weekend: {service.weekendCapacity}</p>}
-                      {!service.dayCapacity && !service.nightCapacity && !service.weekendCapacity && (
-                        <p className="text-slate-500">Not specified</p>
-                      )}
+                    <div>
+                      <p className="font-medium text-white text-sm">Unit</p>
+                      <p className="mt-1 text-slate-400">
+                        {service.unitId ? "Assigned" : "Not assigned"}
+                      </p>
                     </div>
-                  </div>
-                  <div>
-                    <p className="font-medium text-white">Unit</p>
-                    <p className="mt-1">
-                      {service.unitId ? "Assigned" : "Not assigned"}
-                    </p>
                   </div>
                 </div>
               </div>

@@ -270,41 +270,16 @@ export const toggleActive = mutation({
     }
 
     const newStatus = !hospital.isActive;
+    let cascadeResult: Record<string, number> | undefined;
 
     // If deactivating, cascade to all child entities
     if (!newStatus) {
-      // Deactivate all departments
-      const departments = await ctx.db
-        .query("departments")
-        .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
-        .collect();
+      // Use cascade function to deactivate all related entities
+      const { cascadeDeactivateHospital } = await import("./lib/cascade");
+      const result = await cascadeDeactivateHospital(ctx, args.hospitalId);
+      cascadeResult = result.affected;
 
-      for (const dept of departments) {
-        await ctx.db.patch(dept._id, { isActive: false });
-      }
-
-      // Deactivate all services
-      const services = await ctx.db
-        .query("services")
-        .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
-        .collect();
-
-      for (const service of services) {
-        await ctx.db.patch(service._id, { isActive: false });
-      }
-
-      // Cancel all open job positions
-      const positions = await ctx.db
-        .query("job_positions")
-        .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
-        .filter((q) => q.eq(q.field("status"), "Open"))
-        .collect();
-
-      for (const pos of positions) {
-        await ctx.db.patch(pos._id, { status: "Cancelled", isActive: false });
-      }
-
-      // Deactivate all units
+      // Also deactivate units (not handled by cascade function)
       const units = await ctx.db
         .query("units")
         .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
@@ -323,11 +298,15 @@ export const toggleActive = mutation({
       action: newStatus ? "ACTIVATE_HOSPITAL" : "DEACTIVATE_HOSPITAL",
       resourceType: "HOSPITAL",
       resourceId: args.hospitalId,
-      changes: { name: hospital.name, cascaded: !newStatus },
+      changes: {
+        name: hospital.name,
+        cascaded: !newStatus,
+        ...(cascadeResult && { affected: cascadeResult }),
+      },
       timestamp: Date.now(),
     });
 
-    return { isActive: newStatus };
+    return { isActive: newStatus, cascadeResult };
   },
 });
 

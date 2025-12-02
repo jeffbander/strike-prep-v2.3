@@ -15,7 +15,8 @@ export async function signInAs(
 
   // Sign out first if needed
   await page.goto(URLS.dashboard);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(1000); // Give Clerk time to initialize
 
   // Check if we need to sign out
   const userButton = page.locator(".cl-userButtonTrigger");
@@ -30,7 +31,8 @@ export async function signInAs(
 
   // Navigate to sign-in
   await page.goto(URLS.signIn);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(1000); // Give Clerk time to initialize
 
   // Check if already on dashboard (somehow still authenticated)
   if (page.url().includes("/dashboard")) {
@@ -100,9 +102,11 @@ export async function isAuthenticated(page: Page): Promise<boolean> {
 
 /**
  * Wait for page to be fully loaded
+ * Note: Using domcontentloaded instead of networkidle because Clerk
+ * maintains persistent WebSocket connections that prevent networkidle
  */
 export async function waitForPageLoad(page: Page): Promise<void> {
-  await page.waitForLoadState("networkidle");
-  // Additional wait for React hydration
-  await page.waitForTimeout(500);
+  await page.waitForLoadState("domcontentloaded");
+  // Additional wait for React hydration and Clerk initialization
+  await page.waitForTimeout(1000);
 }
