@@ -167,8 +167,14 @@ export type AuditAction =
   | "UNASSIGN"
   | "EXPORT"
   | "BULK_UPLOAD"
+  | "BULK_UPDATE"
+  | "BULK_IMPORT"
   | "DEACTIVATE"
-  | "ACTIVATE";
+  | "ACTIVATE"
+  | "COMPLETE"
+  | "CANCEL"
+  | "REGENERATE"
+  | "CLEAR";
 
 export type ResourceType =
   | "HEALTH_SYSTEM"
@@ -182,7 +188,12 @@ export type ResourceType =
   | "ASSIGNMENT"
   | "USER"
   | "JOB_TYPE"
-  | "SKILL";
+  | "SKILL"
+  | "STRIKE_SCENARIO"
+  | "SCENARIO_POSITION"
+  | "SCENARIO_ASSIGNMENT"
+  | "PROVIDER_AVAILABILITY"
+  | "LABOR_POOL";
 
 export async function auditLog(
   ctx: MutationCtx,
