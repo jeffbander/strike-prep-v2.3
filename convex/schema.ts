@@ -347,4 +347,138 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_timestamp", ["timestamp"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // STRIKE SCENARIOS
+  // For modeling strike events with date ranges and capacity reduction
+  // ═══════════════════════════════════════════════════════════════════
+
+  strike_scenarios: defineTable({
+    healthSystemId: v.id("health_systems"),
+    hospitalId: v.optional(v.id("hospitals")), // Optional: can be health-system wide
+    name: v.string(),
+    description: v.optional(v.string()),
+
+    // Date range for the strike
+    startDate: v.string(), // ISO date "2025-01-03"
+    endDate: v.string(), // ISO date "2025-01-10"
+
+    // Affected job types with their reduction percentages
+    affectedJobTypes: v.array(
+      v.object({
+        jobTypeId: v.id("job_types"),
+        reductionPercent: v.number(), // 100 = full strike, 50 = half, 25 = quarter
+      })
+    ),
+
+    // Status workflow
+    status: v.string(), // "Draft" | "Active" | "Completed" | "Cancelled"
+
+    createdBy: v.id("users"),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_health_system", ["healthSystemId"])
+    .index("by_hospital", ["hospitalId"])
+    .index("by_status", ["status"])
+    .index("by_date_range", ["startDate", "endDate"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // SCENARIO POSITIONS
+  // Date-specific positions generated for a strike scenario
+  // ═══════════════════════════════════════════════════════════════════
+
+  scenario_positions: defineTable({
+    scenarioId: v.id("strike_scenarios"),
+    serviceId: v.id("services"),
+    serviceJobTypeId: v.id("service_job_types"),
+    jobTypeId: v.id("job_types"),
+    hospitalId: v.id("hospitals"),
+    departmentId: v.id("departments"),
+
+    // Date and shift specifics
+    date: v.string(), // ISO date "2025-01-03"
+    shiftType: v.string(), // "AM" | "PM"
+    shiftStart: v.string(), // "07:00"
+    shiftEnd: v.string(), // "19:00"
+
+    // Position tracking
+    positionNumber: v.number(),
+    jobCode: v.string(), // Includes date: "ICU_MGH_NP_2025-01-03_AM_1"
+
+    // Headcount tracking for capacity modeling
+    originalHeadcount: v.number(), // What it would be without strike
+    scenarioHeadcount: v.number(), // Reduced headcount for this scenario
+
+    status: v.string(), // "Open" | "Assigned" | "Confirmed" | "Cancelled"
+    isActive: v.boolean(),
+  })
+    .index("by_scenario", ["scenarioId"])
+    .index("by_scenario_date", ["scenarioId", "date"])
+    .index("by_scenario_service", ["scenarioId", "serviceId"])
+    .index("by_service_date", ["serviceId", "date"])
+    .index("by_status", ["status"])
+    .index("by_job_code", ["jobCode"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PROVIDER AVAILABILITY
+  // Date-specific availability for providers (replaces text schedule fields)
+  // ═══════════════════════════════════════════════════════════════════
+
+  provider_availability: defineTable({
+    providerId: v.id("providers"),
+    scenarioId: v.optional(v.id("strike_scenarios")), // Optional: can be general availability
+
+    date: v.string(), // ISO date "2025-01-03"
+
+    // Availability type
+    availabilityType: v.string(), // "available" | "unavailable"
+
+    // Shift-specific availability
+    amAvailable: v.boolean(),
+    pmAvailable: v.boolean(),
+    amPreferred: v.optional(v.boolean()), // Marks as preferred shift
+    pmPreferred: v.optional(v.boolean()),
+
+    // Optional notes
+    notes: v.optional(v.string()),
+
+    // Tracking who entered this
+    enteredBy: v.id("users"),
+    enteredAt: v.number(),
+
+    // Source of entry for audit purposes
+    source: v.string(), // "admin" | "provider" | "bulk_import"
+  })
+    .index("by_provider", ["providerId"])
+    .index("by_provider_date", ["providerId", "date"])
+    .index("by_scenario", ["scenarioId"])
+    .index("by_date", ["date"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // SCENARIO ASSIGNMENTS
+  // Links providers to scenario-specific positions
+  // ═══════════════════════════════════════════════════════════════════
+
+  scenario_assignments: defineTable({
+    scenarioPositionId: v.id("scenario_positions"),
+    providerId: v.id("providers"),
+    scenarioId: v.id("strike_scenarios"),
+
+    status: v.string(), // "Active" | "Confirmed" | "Cancelled"
+    assignedAt: v.number(),
+    assignedBy: v.id("users"),
+
+    cancelledAt: v.optional(v.number()),
+    cancelledBy: v.optional(v.id("users")),
+    cancelReason: v.optional(v.string()),
+
+    notes: v.optional(v.string()),
+  })
+    .index("by_position", ["scenarioPositionId"])
+    .index("by_provider", ["providerId"])
+    .index("by_provider_scenario", ["providerId", "scenarioId"])
+    .index("by_scenario", ["scenarioId"])
+    .index("by_status", ["status"]),
 });

@@ -283,6 +283,27 @@ export const bulkCreateWithIds = mutation({
 });
 
 /**
+ * Get a single provider by ID
+ */
+export const get = query({
+  args: { providerId: v.id("providers") },
+  handler: async (ctx, args) => {
+    const provider = await ctx.db.get(args.providerId);
+    if (!provider) return null;
+
+    const jobType = await ctx.db.get(provider.jobTypeId);
+    const department = await ctx.db.get(provider.departmentId);
+
+    return {
+      ...provider,
+      jobTypeName: jobType?.name,
+      jobTypeCode: jobType?.code,
+      departmentName: department?.name,
+    };
+  },
+});
+
+/**
  * List providers based on scope
  */
 export const list = query({

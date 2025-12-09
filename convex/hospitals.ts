@@ -169,6 +169,16 @@ export const list = query({
 });
 
 /**
+ * Get a single hospital by ID
+ */
+export const get = query({
+  args: { hospitalId: v.id("hospitals") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.hospitalId);
+  },
+});
+
+/**
  * Get a single hospital with its departments
  */
 export const getWithDepartments = query({

@@ -265,6 +265,7 @@ export const list = query({
   args: {
     departmentId: v.optional(v.id("departments")),
     hospitalId: v.optional(v.id("hospitals")),
+    healthSystemId: v.optional(v.id("health_systems")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -277,6 +278,7 @@ export const list = query({
 
     if (!currentUser) return [];
 
+    // If specific department filter is provided
     if (args.departmentId) {
       const departmentId = args.departmentId;
       return await ctx.db
@@ -285,8 +287,41 @@ export const list = query({
         .collect();
     }
 
+    // If specific hospital filter is provided
     if (args.hospitalId) {
       const hospitalId = args.hospitalId;
+      return await ctx.db
+        .query("services")
+        .withIndex("by_hospital", (q) => q.eq("hospitalId", hospitalId))
+        .collect();
+    }
+
+    // If specific health system filter is provided
+    if (args.healthSystemId) {
+      const healthSystemId = args.healthSystemId;
+      return await ctx.db
+        .query("services")
+        .withIndex("by_health_system", (q) => q.eq("healthSystemId", healthSystemId))
+        .collect();
+    }
+
+    // Super admin sees all services (or can filter above)
+    if (currentUser.role === "super_admin") {
+      return await ctx.db.query("services").collect();
+    }
+
+    // Health system admin sees all services in their health system
+    if (currentUser.role === "health_system_admin" && currentUser.healthSystemId) {
+      const healthSystemId = currentUser.healthSystemId;
+      return await ctx.db
+        .query("services")
+        .withIndex("by_health_system", (q) => q.eq("healthSystemId", healthSystemId))
+        .collect();
+    }
+
+    // Hospital admin sees all services in their hospital
+    if (currentUser.role === "hospital_admin" && currentUser.hospitalId) {
+      const hospitalId = currentUser.hospitalId;
       return await ctx.db
         .query("services")
         .withIndex("by_hospital", (q) => q.eq("hospitalId", hospitalId))
@@ -299,15 +334,6 @@ export const list = query({
       return await ctx.db
         .query("services")
         .withIndex("by_department", (q) => q.eq("departmentId", departmentId))
-        .collect();
-    }
-
-    // Hospital admin sees all services in their hospital
-    if (currentUser.role === "hospital_admin" && currentUser.hospitalId) {
-      const hospitalId = currentUser.hospitalId;
-      return await ctx.db
-        .query("services")
-        .withIndex("by_hospital", (q) => q.eq("hospitalId", hospitalId))
         .collect();
     }
 

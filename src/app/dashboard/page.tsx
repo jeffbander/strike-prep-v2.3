@@ -4,11 +4,9 @@ import { useUser, SignOutButton } from "@clerk/nextjs";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
 export default function DashboardPage() {
   const { user, isLoaded: clerkLoaded } = useUser();
-  const router = useRouter();
   const [syncError, setSyncError] = useState<string | null>(null);
 
   // Sync user to Convex when they load
@@ -63,16 +61,9 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white p-8">
+    <div className="p-8 text-white">
       <div className="max-w-4xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold">Strike Prep Dashboard</h1>
-          <SignOutButton>
-            <button className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors">
-              Sign Out
-            </button>
-          </SignOutButton>
-        </div>
+        <h1 className="text-3xl font-bold mb-8">Welcome Back</h1>
 
         <div className="bg-slate-800 rounded-lg p-6 mb-6">
           <h2 className="text-xl font-semibold mb-4">Your Profile</h2>
@@ -104,6 +95,10 @@ function SuperAdminDashboard() {
       <div className="bg-slate-800 rounded-lg p-6">
         <h2 className="text-xl font-semibold mb-4">Super Admin Actions</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <a href="/dashboard/scenarios" className="block p-4 bg-amber-700 hover:bg-amber-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Strike Scenarios</h3>
+            <p className="text-sm text-amber-200">Plan and manage strike coverage scenarios</p>
+          </a>
           <a href="/dashboard/health-systems" className="block p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
             <h3 className="font-medium">Manage Health Systems</h3>
             <p className="text-sm text-slate-400">Create and configure health systems</p>
@@ -115,6 +110,10 @@ function SuperAdminDashboard() {
           <a href="/dashboard/coverage" className="block p-4 bg-emerald-700 hover:bg-emerald-600 rounded-lg transition-colors">
             <h3 className="font-medium">Coverage Dashboard</h3>
             <p className="text-sm text-emerald-200">View real-time coverage metrics and analytics</p>
+          </a>
+          <a href="/dashboard/availability" className="block p-4 bg-blue-700 hover:bg-blue-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Provider Availability</h3>
+            <p className="text-sm text-blue-200">Manage provider availability for scenarios</p>
           </a>
           <a href="/dashboard/audit-logs" className="block p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
             <h3 className="font-medium">Audit Logs</h3>
@@ -132,6 +131,10 @@ function HealthSystemAdminDashboard() {
       <div className="bg-slate-800 rounded-lg p-6">
         <h2 className="text-xl font-semibold mb-4">Health System Admin Actions</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <a href="/dashboard/scenarios" className="block p-4 bg-amber-700 hover:bg-amber-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Strike Scenarios</h3>
+            <p className="text-sm text-amber-200">Plan and manage strike coverage scenarios</p>
+          </a>
           <a href="/dashboard/hospitals" className="block p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
             <h3 className="font-medium">Manage Hospitals</h3>
             <p className="text-sm text-slate-400">Create and configure hospitals</p>
@@ -143,6 +146,10 @@ function HealthSystemAdminDashboard() {
           <a href="/dashboard/coverage" className="block p-4 bg-emerald-700 hover:bg-emerald-600 rounded-lg transition-colors">
             <h3 className="font-medium">Coverage Dashboard</h3>
             <p className="text-sm text-emerald-200">View real-time coverage metrics and analytics</p>
+          </a>
+          <a href="/dashboard/availability" className="block p-4 bg-blue-700 hover:bg-blue-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Provider Availability</h3>
+            <p className="text-sm text-blue-200">Manage provider availability for scenarios</p>
           </a>
           <a href="/dashboard/audit-logs" className="block p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
             <h3 className="font-medium">Audit Logs</h3>
@@ -188,6 +195,10 @@ function DeptAdminDashboard() {
       <div className="bg-slate-800 rounded-lg p-6">
         <h2 className="text-xl font-semibold mb-4">Department Admin Actions</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <a href="/dashboard/scenarios" className="block p-4 bg-amber-700 hover:bg-amber-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Strike Scenarios</h3>
+            <p className="text-sm text-amber-200">Plan and manage strike coverage scenarios</p>
+          </a>
           <a href="/dashboard/services" className="block p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
             <h3 className="font-medium">Manage Services</h3>
             <p className="text-sm text-slate-400">Create and configure services</p>
@@ -196,13 +207,17 @@ function DeptAdminDashboard() {
             <h3 className="font-medium">Manage Providers</h3>
             <p className="text-sm text-slate-400">Add and manage provider staff</p>
           </a>
+          <a href="/dashboard/availability" className="block p-4 bg-blue-700 hover:bg-blue-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Provider Availability</h3>
+            <p className="text-sm text-blue-200">Manage provider availability for scenarios</p>
+          </a>
           <a href="/dashboard/matching" className="block p-4 bg-emerald-700 hover:bg-emerald-600 rounded-lg transition-colors">
             <h3 className="font-medium">Start Matching</h3>
             <p className="text-sm text-emerald-200">Match providers to open positions</p>
           </a>
-          <a href="/dashboard/coverage" className="block p-4 bg-blue-700 hover:bg-blue-600 rounded-lg transition-colors">
+          <a href="/dashboard/coverage" className="block p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
             <h3 className="font-medium">Coverage Dashboard</h3>
-            <p className="text-sm text-blue-200">View coverage metrics and export</p>
+            <p className="text-sm text-slate-400">View coverage metrics and export</p>
           </a>
         </div>
       </div>

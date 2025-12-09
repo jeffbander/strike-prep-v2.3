@@ -3,6 +3,7 @@
 import { useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { WizardStepProps, initializeJobTypeConfigs } from "../types";
+import { Id } from "../../../../convex/_generated/dataModel";
 
 export default function Step2RoleSelection({
   wizardState,
@@ -10,7 +11,21 @@ export default function Step2RoleSelection({
   onNext,
   onBack,
 }: WizardStepProps) {
-  const jobTypes = useQuery(api.jobTypes.list, {});
+  // Get the hospital to find the health system
+  const hospital = useQuery(
+    api.hospitals.get,
+    wizardState.hospitalId
+      ? { hospitalId: wizardState.hospitalId as Id<"hospitals"> }
+      : "skip"
+  );
+
+  // Query job types with the health system ID from the selected hospital
+  const jobTypes = useQuery(
+    api.jobTypes.list,
+    hospital?.healthSystemId
+      ? { healthSystemId: hospital.healthSystemId }
+      : {}
+  );
 
   const handleToggleJobType = (jobTypeId: string) => {
     const currentSelected = wizardState.selectedJobTypeIds;
