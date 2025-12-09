@@ -86,14 +86,28 @@ export const list = query({
 
     let scenarios;
 
-    // Filter by status if provided
-    if (args.status) {
+    // Super admin can see all scenarios
+    if (currentUser.role === "super_admin") {
+      if (args.healthSystemId) {
+        // Filter by specific health system if provided
+        scenarios = await ctx.db
+          .query("strike_scenarios")
+          .withIndex("by_health_system", (q) => q.eq("healthSystemId", args.healthSystemId!))
+          .collect();
+      } else {
+        // Get all scenarios
+        scenarios = await ctx.db
+          .query("strike_scenarios")
+          .collect();
+      }
+    } else if (args.status) {
+      // Filter by status if provided (for non-super admins, will filter by scope below)
       scenarios = await ctx.db
         .query("strike_scenarios")
         .withIndex("by_status", (q) => q.eq("status", args.status!))
         .collect();
     } else {
-      // Get all scenarios for health system
+      // Get all scenarios for user's health system
       const healthSystemId = args.healthSystemId || currentUser.healthSystemId;
       if (!healthSystemId) return [];
 
