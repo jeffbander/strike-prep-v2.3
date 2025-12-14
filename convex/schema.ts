@@ -270,17 +270,22 @@ export default defineSchema({
     supervisingPhysician: v.optional(v.string()),
     specialtyCertification: v.optional(v.string()),
     previousExperience: v.optional(v.string()),
+    hasVisa: v.optional(v.boolean()), // Fellows with visas can only moonlight at home hospital
+    smsOptOut: v.optional(v.boolean()), // Provider opted out of SMS (replied STOP)
 
     createdBy: v.id("users"),
     isActive: v.boolean(),
     createdAt: v.number(),
+    updatedAt: v.optional(v.number()), // Track last update for upsert operations
   })
     .index("by_health_system", ["healthSystemId"])
     .index("by_hospital", ["hospitalId"])
     .index("by_department", ["departmentId"])
     .index("by_department_active", ["departmentId", "isActive"])
     .index("by_job_type", ["jobTypeId"])
-    .index("by_name", ["lastName", "firstName"]),
+    .index("by_name", ["lastName", "firstName"])
+    .index("by_email", ["email"]) // For email-based upsert lookups
+    .index("by_cell_phone", ["cellPhone"]), // For SMS reply lookup
 
   // ═══════════════════════════════════════════════════════════════════
   // PROVIDER SKILLS
@@ -481,4 +486,52 @@ export default defineSchema({
     .index("by_provider_scenario", ["providerId", "scenarioId"])
     .index("by_scenario", ["scenarioId"])
     .index("by_status", ["status"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // SMS LOGS
+  // Track all SMS messages sent for audit and status tracking
+  // ═══════════════════════════════════════════════════════════════════
+
+  sms_logs: defineTable({
+    // Direction and threading
+    direction: v.optional(v.string()), // "outbound" | "inbound" (optional for backwards compat)
+    replyToSmsLogId: v.optional(v.id("sms_logs")), // Links inbound to original outbound
+
+    // Who sent it (for outbound)
+    sentBy: v.optional(v.id("users")), // Optional for inbound messages
+    healthSystemId: v.optional(v.id("health_systems")), // Optional for inbound
+
+    // Provider info
+    providerId: v.optional(v.id("providers")), // Optional: may not match on inbound
+    toPhone: v.string(), // Outbound: recipient / Inbound: our Twilio number
+    fromPhone: v.optional(v.string()), // Inbound: sender's phone
+    providerName: v.optional(v.string()), // Snapshot of provider name
+
+    // Message content
+    messageType: v.string(), // "coverage_request" | "shift_confirmation" | "custom" | "inbound_reply"
+    message: v.string(),
+
+    // Reply parsing (for inbound)
+    replyIntent: v.optional(v.string()), // "confirmed" | "declined" | "interested" | "stop" | "help" | "unclear"
+
+    // Optional context
+    scenarioId: v.optional(v.id("strike_scenarios")),
+    scenarioPositionId: v.optional(v.id("scenario_positions")),
+
+    // Twilio response
+    twilioSid: v.optional(v.string()), // Twilio message SID
+    status: v.string(), // "pending" | "sent" | "delivered" | "failed" | "received"
+    errorMessage: v.optional(v.string()),
+
+    sentAt: v.number(),
+  })
+    .index("by_provider", ["providerId"])
+    .index("by_sent_by", ["sentBy"])
+    .index("by_scenario", ["scenarioId"])
+    .index("by_health_system", ["healthSystemId"])
+    .index("by_status", ["status"])
+    .index("by_sent_at", ["sentAt"])
+    .index("by_to_phone", ["toPhone"]) // For finding conversations
+    .index("by_from_phone", ["fromPhone"]) // For matching inbound to provider
+    .index("by_direction", ["direction"]),
 });

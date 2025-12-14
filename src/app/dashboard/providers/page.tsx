@@ -1,15 +1,18 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { toast } from "sonner";
 import Link from "next/link";
 import { Id } from "../../../../convex/_generated/dataModel";
 import * as XLSX from "xlsx";
+import ProviderImport from "@/components/providers/ProviderImport";
+import ProviderExport from "@/components/providers/ProviderExport";
 
 export default function ProvidersPage() {
   const currentUser = useQuery(api.users.getCurrentUser);
+  const healthSystems = useQuery(api.healthSystems.list, {});
   const hospitals = useQuery(api.hospitals.list, {});
   const departments = useQuery(api.departments.list, {});
   const jobTypes = useQuery(api.jobTypes.list, {});
@@ -24,10 +27,19 @@ export default function ProvidersPage() {
   const toggleActive = useMutation(api.providers.toggleActive);
   const addHospitalAccess = useMutation(api.providers.addHospitalAccess);
   const removeHospitalAccess = useMutation(api.providers.removeHospitalAccess);
+  const sendSMS = useAction(api.sms.sendSMS);
+  const sendBulkSMS = useAction(api.sms.sendBulkSMS);
 
   const [isCreating, setIsCreating] = useState(false);
+  const [isSendingSMS, setIsSendingSMS] = useState(false);
+  const [smsModalOpen, setSmsModalOpen] = useState(false);
+  const [smsMessageType, setSmsMessageType] = useState<"coverage_request" | "shift_confirmation" | "custom">("coverage_request");
+  const [smsCustomMessage, setSmsCustomMessage] = useState("");
+  const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(new Set());
   const [isBulkUpload, setIsBulkUpload] = useState(false);
   const [isCSVUpload, setIsCSVUpload] = useState(false);
+  const [isNewImportOpen, setIsNewImportOpen] = useState(false);
+  const [selectedHealthSystemForImport, setSelectedHealthSystemForImport] = useState<string>("");
   const [csvUploadDepartmentId, setCSVUploadDepartmentId] = useState("");
   const [csvPreviewData, setCSVPreviewData] = useState<any[] | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -37,6 +49,11 @@ export default function ProvidersPage() {
   const [selectedDepartmentFilter, setSelectedDepartmentFilter] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const csvFileInputRef = useRef<HTMLInputElement>(null);
+
+  // For super_admin without healthSystemId, use the selected one. Otherwise use user's healthSystemId.
+  const effectiveHealthSystemId = currentUser?.healthSystemId || (selectedHealthSystemForImport as Id<"health_systems"> | undefined);
+  const isSuperAdmin = currentUser?.role === "super_admin";
+  const needsHealthSystemSelection = isSuperAdmin && !currentUser?.healthSystemId;
 
   const [formData, setFormData] = useState({
     firstName: "",
@@ -355,6 +372,72 @@ export default function ProvidersPage() {
     }
   };
 
+  // SMS Handlers
+  const handleSendSingleSMS = async (providerId: string) => {
+    if (!providerId) return;
+
+    setIsSendingSMS(true);
+    try {
+      await sendSMS({
+        providerId: providerId as Id<"providers">,
+        messageType: smsMessageType,
+        customMessage: smsMessageType === "custom" ? smsCustomMessage : undefined,
+      });
+      toast.success("SMS sent successfully");
+      setSmsModalOpen(false);
+      setSmsCustomMessage("");
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setIsSendingSMS(false);
+    }
+  };
+
+  const handleSendBulkSMS = async () => {
+    if (selectedProviderIds.size === 0) {
+      toast.error("No providers selected");
+      return;
+    }
+
+    setIsSendingSMS(true);
+    try {
+      const result = await sendBulkSMS({
+        providerIds: Array.from(selectedProviderIds) as Id<"providers">[],
+        messageType: smsMessageType,
+        customMessage: smsMessageType === "custom" ? smsCustomMessage : undefined,
+      });
+      toast.success(`SMS sent: ${result.sent} successful, ${result.failed} failed`);
+      setSmsModalOpen(false);
+      setSelectedProviderIds(new Set());
+      setSmsCustomMessage("");
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setIsSendingSMS(false);
+    }
+  };
+
+  const toggleProviderSelection = (providerId: string) => {
+    const newSet = new Set(selectedProviderIds);
+    if (newSet.has(providerId)) {
+      newSet.delete(providerId);
+    } else {
+      newSet.add(providerId);
+    }
+    setSelectedProviderIds(newSet);
+  };
+
+  const selectAllProviders = () => {
+    if (filteredProviders) {
+      const allIds = filteredProviders.filter(p => p.cellPhone).map(p => p._id);
+      setSelectedProviderIds(new Set(allIds));
+    }
+  };
+
+  const clearSelection = () => {
+    setSelectedProviderIds(new Set());
+  };
+
   const filteredDepartments = formData.homeHospitalId
     ? departments?.filter((d) => d.hospitalId === formData.homeHospitalId)
     : departments;
@@ -383,18 +466,52 @@ export default function ProvidersPage() {
             </Link>
             <h1 className="text-3xl font-bold">Providers</h1>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {/* Health System Selector for super_admin */}
+            {needsHealthSystemSelection && (
+              <select
+                value={selectedHealthSystemForImport}
+                onChange={(e) => setSelectedHealthSystemForImport(e.target.value)}
+                className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm focus:outline-none focus:border-blue-500"
+              >
+                <option value="">Select Health System...</option>
+                {healthSystems?.map((hs) => (
+                  <option key={hs._id} value={hs._id}>
+                    {hs.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {effectiveHealthSystemId && (
+              <>
+                <ProviderExport
+                  healthSystemId={effectiveHealthSystemId}
+                  hospitalId={selectedHospitalFilter as Id<"hospitals"> || undefined}
+                  departmentId={selectedDepartmentFilter as Id<"departments"> || undefined}
+                  scopeName={
+                    selectedDepartmentFilter
+                      ? departments?.find((d) => d._id === selectedDepartmentFilter)?.name || "Providers"
+                      : selectedHospitalFilter
+                      ? hospitals?.find((h) => h._id === selectedHospitalFilter)?.name || "Providers"
+                      : "All_Providers"
+                  }
+                />
+                <button
+                  onClick={() => setIsNewImportOpen(true)}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  Import Providers
+                </button>
+              </>
+            )}
             <button
               onClick={() => setIsCSVUpload(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm"
             >
-              CSV Upload (12-col)
-            </button>
-            <button
-              onClick={() => setIsBulkUpload(true)}
-              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-            >
-              Quick Upload
+              Legacy CSV
             </button>
             <button
               onClick={() => setIsCreating(true)}
@@ -675,7 +792,7 @@ export default function ProvidersPage() {
         )}
 
         {/* Filter Bar */}
-        <div className="flex gap-4 mb-6">
+        <div className="flex flex-wrap gap-4 mb-6 items-center">
           <select
             value={selectedHospitalFilter}
             onChange={(e) => {
@@ -706,9 +823,42 @@ export default function ProvidersPage() {
                 </option>
               ))}
           </select>
-          <span className="text-slate-400 self-center">
+          <span className="text-slate-400">
             {filteredProviders?.length || 0} providers
           </span>
+
+          {/* Bulk SMS Controls */}
+          <div className="flex-1" />
+          {selectedProviderIds.size > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-purple-400 text-sm">
+                {selectedProviderIds.size} selected
+              </span>
+              <button
+                onClick={clearSelection}
+                className="text-slate-400 hover:text-white text-sm"
+              >
+                Clear
+              </button>
+              <button
+                onClick={() => setSmsModalOpen(true)}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm transition-colors flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                </svg>
+                Send SMS to {selectedProviderIds.size}
+              </button>
+            </div>
+          )}
+          {selectedProviderIds.size === 0 && (
+            <button
+              onClick={selectAllProviders}
+              className="text-slate-400 hover:text-white text-sm"
+            >
+              Select all with phone
+            </button>
+          )}
         </div>
 
         {/* Provider Detail Panel */}
@@ -722,6 +872,20 @@ export default function ProvidersPage() {
                 <p className="text-slate-400">{selectedProviderData.email}</p>
               </div>
               <div className="flex gap-2">
+                {selectedProviderData.cellPhone && (
+                  <button
+                    onClick={() => {
+                      setSmsModalOpen(true);
+                      setSelectedProviderIds(new Set([selectedProviderData._id]));
+                    }}
+                    className="px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-sm transition-colors flex items-center gap-1"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                    </svg>
+                    SMS
+                  </button>
+                )}
                 <button
                   onClick={() => handleStartEdit(selectedProviderData)}
                   className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
@@ -963,24 +1127,37 @@ export default function ProvidersPage() {
           <table className="w-full">
             <thead className="bg-slate-700">
               <tr>
+                <th className="px-2 py-3 text-center w-10">
+                  <input
+                    type="checkbox"
+                    checked={filteredProviders?.filter(p => p.cellPhone).every(p => selectedProviderIds.has(p._id)) && (filteredProviders?.filter(p => p.cellPhone).length ?? 0) > 0}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        selectAllProviders();
+                      } else {
+                        clearSelection();
+                      }
+                    }}
+                    className="rounded border-slate-600 bg-slate-700 text-purple-600 focus:ring-purple-500"
+                  />
+                </th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-slate-300">Name</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-slate-300">Email</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-slate-300">Phone</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-slate-300">Job Type</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-slate-300">Hospital</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-slate-300">Skills</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-slate-300">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
               {filteredProviders === undefined ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                     Loading...
                   </td>
                 </tr>
               ) : filteredProviders.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                     No providers found
                   </td>
                 </tr>
@@ -988,21 +1165,32 @@ export default function ProvidersPage() {
                 filteredProviders.map((provider) => (
                   <tr
                     key={provider._id}
-                    className="hover:bg-slate-700/50 cursor-pointer"
+                    className={`hover:bg-slate-700/50 cursor-pointer ${selectedProviderIds.has(provider._id) ? "bg-purple-900/20" : ""}`}
                     onClick={() => setSelectedProvider(provider._id)}
                   >
+                    <td className="px-2 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      {provider.cellPhone ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedProviderIds.has(provider._id)}
+                          onChange={() => toggleProviderSelection(provider._id)}
+                          className="rounded border-slate-600 bg-slate-700 text-purple-600 focus:ring-purple-500"
+                        />
+                      ) : (
+                        <span className="text-slate-600 text-xs">No phone</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       {provider.firstName} {provider.lastName}
                     </td>
-                    <td className="px-4 py-3 text-slate-400">{provider.email}</td>
+                    <td className="px-4 py-3 text-slate-400 text-sm">
+                      {provider.cellPhone || <span className="text-slate-600">—</span>}
+                    </td>
                     <td className="px-4 py-3">
                       {jobTypes?.find((jt) => jt._id === provider.jobTypeId)?.code}
                     </td>
                     <td className="px-4 py-3">
                       {hospitals?.find((h) => h._id === provider.homeHospitalId)?.shortCode}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-slate-400">{provider.skills?.length || 0} skills</span>
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -1019,6 +1207,133 @@ export default function ProvidersPage() {
             </tbody>
           </table>
         </div>
+
+        {/* New Provider Import Modal */}
+        {effectiveHealthSystemId && (
+          <ProviderImport
+            healthSystemId={effectiveHealthSystemId}
+            isOpen={isNewImportOpen}
+            onClose={() => setIsNewImportOpen(false)}
+          />
+        )}
+
+        {/* SMS Modal */}
+        {smsModalOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-slate-800 rounded-lg p-6 w-full max-w-lg">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold flex items-center gap-2">
+                  <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                  </svg>
+                  Send SMS
+                </h2>
+                <button
+                  onClick={() => {
+                    setSmsModalOpen(false);
+                    setSmsCustomMessage("");
+                  }}
+                  className="text-slate-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <p className="text-slate-400 text-sm mb-2">
+                  Sending to <span className="text-purple-400 font-medium">{selectedProviderIds.size}</span> provider{selectedProviderIds.size !== 1 ? "s" : ""}
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm text-slate-400 mb-2">Message Type</label>
+                <select
+                  value={smsMessageType}
+                  onChange={(e) => setSmsMessageType(e.target.value as typeof smsMessageType)}
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-purple-500"
+                >
+                  <option value="coverage_request">Coverage Request</option>
+                  <option value="shift_confirmation">Shift Confirmation</option>
+                  <option value="custom">Custom Message</option>
+                </select>
+              </div>
+
+              {smsMessageType === "coverage_request" && (
+                <div className="mb-4 p-3 bg-slate-700/50 rounded-lg text-sm text-slate-300">
+                  <p className="font-medium mb-1">Preview:</p>
+                  <p className="italic">
+                    &quot;Hi [Name], we have strike coverage shifts available. Reply YES if you&apos;re interested in picking up extra shifts, or call us for more details.&quot;
+                  </p>
+                </div>
+              )}
+
+              {smsMessageType === "shift_confirmation" && (
+                <div className="mb-4 p-3 bg-slate-700/50 rounded-lg text-sm text-slate-300">
+                  <p className="font-medium mb-1">Preview:</p>
+                  <p className="italic">
+                    &quot;Hi [Name], this is a confirmation of your assigned shift. Please reply CONFIRM to acknowledge receipt.&quot;
+                  </p>
+                </div>
+              )}
+
+              {smsMessageType === "custom" && (
+                <div className="mb-4">
+                  <label className="block text-sm text-slate-400 mb-2">Custom Message</label>
+                  <textarea
+                    value={smsCustomMessage}
+                    onChange={(e) => setSmsCustomMessage(e.target.value)}
+                    placeholder="Enter your message..."
+                    rows={4}
+                    className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-purple-500 resize-none"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    {smsCustomMessage.length}/160 characters (standard SMS)
+                  </p>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setSmsModalOpen(false);
+                    setSmsCustomMessage("");
+                  }}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (selectedProviderIds.size === 1) {
+                      handleSendSingleSMS(Array.from(selectedProviderIds)[0]);
+                    } else {
+                      handleSendBulkSMS();
+                    }
+                  }}
+                  disabled={isSendingSMS || (smsMessageType === "custom" && !smsCustomMessage.trim())}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {isSendingSMS ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                      Send SMS
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

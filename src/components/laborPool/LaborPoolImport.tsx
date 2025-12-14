@@ -221,6 +221,97 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
     }
   };
 
+  const downloadSampleTemplate = () => {
+    // Build dynamic role codes list from available roles
+    const roleCodesList = exportData?.availableRoles.map(r => r.code).join(", ") || "RN, LPN, CNA, etc.";
+    const skillsList = exportData?.availableSkills.map(s => s.name).slice(0, 5).join(", ") || "BLS, ACLS, etc.";
+
+    // Create workbook with instructions sheet and template sheet
+    const wb = XLSX.utils.book_new();
+
+    // Instructions sheet
+    const instructionsData = [
+      ["STAFFING REQUIREMENTS IMPORT TEMPLATE - INSTRUCTIONS"],
+      [""],
+      ["HOW TO USE THIS TEMPLATE:"],
+      ["1. Go to the 'Template' sheet (tab at bottom)"],
+      ["2. Delete the example rows and add your own data"],
+      ["3. Keep the header row exactly as-is"],
+      ["4. Save as .xlsx and upload"],
+      [""],
+      ["COLUMN DESCRIPTIONS:"],
+      [""],
+      ["Service (REQUIRED)", "The name of the service/unit (e.g., 'Emergency Department', 'ICU')"],
+      ["Short Code (REQUIRED)", "A short abbreviation for the service (e.g., 'ED', 'ICU'). Max 10 characters."],
+      ["Role (REQUIRED)", `The role code for this staffing row. Must match one of your configured roles: ${roleCodesList}`],
+      ["Weekday AM", "Number of staff needed for weekday morning shifts"],
+      ["Weekday PM", "Number of staff needed for weekday evening/night shifts"],
+      ["Weekend AM", "Number of staff needed for weekend morning shifts"],
+      ["Weekend PM", "Number of staff needed for weekend evening/night shifts"],
+      ["Day Capacity", "Patient capacity for day shift (optional, applies to service)"],
+      ["Night Capacity", "Patient capacity for night shift (optional, applies to service)"],
+      ["Weekend Capacity", "Patient capacity for weekend shifts (optional, applies to service)"],
+      ["Skills", `Comma-separated list of required skills. Must match configured skills: ${skillsList}...`],
+      [""],
+      ["BLANK SHIFTS = NO STAFFING NEEDED:"],
+      ["- Leave a shift column BLANK if that service does NOT operate during that shift"],
+      ["- Example: A clinic open only weekdays would have Weekend AM and Weekend PM left blank"],
+      ["- Example: A day-only service would have Weekday PM left blank"],
+      ["- Blank means 'this shift does not exist for this service' - no positions will be created"],
+      ["- Use 0 only if the shift exists but requires zero staff for that specific role"],
+      [""],
+      ["IMPORTANT NOTES:"],
+      ["- Each row represents ONE role within a service"],
+      ["- A service can have multiple rows (one per role type)"],
+      ["- If a service already exists, it will be UPDATED (not duplicated)"],
+      ["- Role codes are case-insensitive (RN = rn = Rn)"],
+      ["- Capacities only need to be set once per service (on any row for that service)"],
+      [""],
+      ["AVAILABLE ROLE CODES FOR THIS DEPARTMENT:"],
+      [roleCodesList],
+      [""],
+      ["AVAILABLE SKILLS FOR THIS DEPARTMENT:"],
+      [exportData?.availableSkills.map(s => s.name).join(", ") || "No skills configured"],
+    ];
+    const instructionsSheet = XLSX.utils.aoa_to_sheet(instructionsData);
+    instructionsSheet["!cols"] = [{ wch: 25 }, { wch: 80 }];
+    XLSX.utils.book_append_sheet(wb, instructionsSheet, "Instructions");
+
+    // Template sheet with example data
+    const templateData = [
+      ["Service", "Short Code", "Role", "Weekday AM", "Weekday PM", "Weekend AM", "Weekend PM", "Day Capacity", "Night Capacity", "Weekend Capacity", "Skills"],
+      ["Emergency Department", "ED", "RN", 5, 4, 3, 3, 50, 30, 25, "BLS, ACLS"],
+      ["Emergency Department", "ED", "LPN", 2, 2, 1, 1, "", "", "", "BLS"],
+      ["Emergency Department", "ED", "CNA", 3, 3, 2, 2, "", "", "", ""],
+      ["Intensive Care Unit", "ICU", "RN", 8, 6, 4, 4, 20, 15, 12, "BLS, ACLS"],
+      ["Intensive Care Unit", "ICU", "CNA", 2, 2, 1, 1, "", "", "", "BLS"],
+      ["Outpatient Clinic (WEEKDAY ONLY)", "OPC", "RN", 3, "", "", "", 30, "", "", "BLS"],
+      ["Outpatient Clinic (WEEKDAY ONLY)", "OPC", "MA", 2, "", "", "", "", "", "", ""],
+      ["Surgical Day Unit (NO NIGHTS)", "SDU", "RN", 4, "", 2, "", 15, "", 10, "BLS, ACLS"],
+      ["", "", "", "", "", "", "", "", "", "", ""],
+      ["^^ DELETE ABOVE EXAMPLES ^^", "", "", "", "", "", "", "", "", "", ""],
+      ["vv ADD YOUR DATA BELOW vv", "", "", "", "", "", "", "", "", "", ""],
+    ];
+    const templateSheet = XLSX.utils.aoa_to_sheet(templateData);
+    templateSheet["!cols"] = [
+      { wch: 25 }, // Service
+      { wch: 12 }, // Short Code
+      { wch: 8 },  // Role
+      { wch: 12 }, // Weekday AM
+      { wch: 12 }, // Weekday PM
+      { wch: 12 }, // Weekend AM
+      { wch: 12 }, // Weekend PM
+      { wch: 12 }, // Day Capacity
+      { wch: 14 }, // Night Capacity
+      { wch: 16 }, // Weekend Capacity
+      { wch: 20 }, // Skills
+    ];
+    XLSX.utils.book_append_sheet(wb, templateSheet, "Template");
+
+    // Download
+    XLSX.writeFile(wb, "staffing_requirements_template.xlsx");
+  };
+
   const handleImport = async () => {
     const validRows = parsedRows.filter((r) => r.errors.length === 0);
     if (validRows.length === 0) {
@@ -275,7 +366,7 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
       <div className="bg-slate-800 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-slate-700 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Import Labor Pool</h2>
+          <h2 className="text-xl font-semibold">Import Current Staffing</h2>
           <button
             onClick={handleClose}
             className="text-slate-400 hover:text-white"
@@ -289,34 +380,96 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
         {/* Content */}
         <div className="flex-1 overflow-auto p-4">
           {step === "upload" && (
-            <div
-              className="border-2 border-dashed border-slate-600 rounded-lg p-8 text-center hover:border-slate-500 transition-colors cursor-pointer"
-              onDrop={handleDrop}
-              onDragOver={(e) => e.preventDefault()}
-              onClick={() => document.getElementById("file-input")?.click()}
-            >
-              <input
-                id="file-input"
-                type="file"
-                accept=".xlsx,.xls"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              <svg
-                className="w-12 h-12 mx-auto mb-4 text-slate-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+            <div className="space-y-6">
+              {/* Instructions Section */}
+              <div className="bg-slate-700/50 rounded-lg p-4">
+                <h3 className="font-semibold text-white mb-3 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  How to Import Staffing Requirements
+                </h3>
+                <ol className="text-sm text-slate-300 space-y-2 ml-7 list-decimal">
+                  <li><strong>Download the template</strong> - Click the button below to get a pre-formatted Excel file with instructions</li>
+                  <li><strong>Fill in your data</strong> - Open the &quot;Template&quot; sheet, delete the example rows, and add your services</li>
+                  <li><strong>Upload</strong> - Drag and drop your file below or click to browse</li>
+                  <li><strong>Review &amp; Import</strong> - Check the preview for errors, then confirm the import</li>
+                </ol>
+
+                <div className="mt-4 pt-4 border-t border-slate-600">
+                  <p className="text-xs text-slate-400 mb-2">
+                    <strong>What gets imported:</strong> Services with their staffing requirements (roles, shift counts, capacities, and required skills).
+                    Each row in the file represents one role within a service. Existing services will be updated, new ones will be created.
+                  </p>
+                  <p className="text-xs text-amber-400/80 mb-3">
+                    <strong>Tip:</strong> Leave shift columns blank if that shift doesn&apos;t apply. For example, a weekday-only clinic would leave Weekend AM/PM blank - no positions will be created for those shifts.
+                  </p>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadSampleTemplate();
+                    }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download Template with Instructions
+                  </button>
+                </div>
+              </div>
+
+              {/* File Drop Zone */}
+              <div
+                className="border-2 border-dashed border-slate-600 rounded-lg p-8 text-center hover:border-emerald-500 hover:bg-slate-700/30 transition-colors cursor-pointer"
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+                onClick={() => document.getElementById("file-input")?.click()}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                <input
+                  id="file-input"
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleFileChange}
+                  className="hidden"
                 />
-              </svg>
-              <p className="text-lg mb-2">Drop Excel file here or click to browse</p>
-              <p className="text-sm text-slate-400">Supports .xlsx and .xls files</p>
+                <svg
+                  className="w-12 h-12 mx-auto mb-4 text-slate-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  />
+                </svg>
+                <p className="text-lg mb-2">Drop your completed Excel file here</p>
+                <p className="text-sm text-slate-400">or click to browse • Supports .xlsx, .xls, and .csv files</p>
+              </div>
+
+              {/* Quick Reference */}
+              <div className="bg-slate-700/30 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-slate-300 mb-2">Required Columns:</h4>
+                <div className="flex flex-wrap gap-2">
+                  <span className="px-2 py-1 bg-slate-700 rounded text-xs text-slate-300">Service</span>
+                  <span className="px-2 py-1 bg-slate-700 rounded text-xs text-slate-300">Short Code</span>
+                  <span className="px-2 py-1 bg-slate-700 rounded text-xs text-slate-300">Role</span>
+                  <span className="px-2 py-1 bg-slate-600 rounded text-xs text-slate-400">Weekday AM</span>
+                  <span className="px-2 py-1 bg-slate-600 rounded text-xs text-slate-400">Weekday PM</span>
+                  <span className="px-2 py-1 bg-slate-600 rounded text-xs text-slate-400">Weekend AM</span>
+                  <span className="px-2 py-1 bg-slate-600 rounded text-xs text-slate-400">Weekend PM</span>
+                  <span className="px-2 py-1 bg-slate-600 rounded text-xs text-slate-400">Capacities</span>
+                  <span className="px-2 py-1 bg-slate-600 rounded text-xs text-slate-400">Skills</span>
+                </div>
+                {exportData?.availableRoles && exportData.availableRoles.length > 0 && (
+                  <p className="text-xs text-slate-400 mt-3">
+                    <strong>Available Roles:</strong> {exportData.availableRoles.map(r => r.code).join(", ")}
+                  </p>
+                )}
+              </div>
             </div>
           )}
 

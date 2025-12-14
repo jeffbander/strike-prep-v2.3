@@ -92,6 +92,14 @@ export const findMatchesForPosition = query({
       );
       if (!canWorkAtHospital) continue;
 
+      // 2b. Check visa restriction for fellows
+      // Fellows with visas can ONLY work at their home hospital
+      if (provider.hasVisa && jobType?.code === "FEL") {
+        if (provider.hospitalId !== position.hospitalId) {
+          continue; // Skip: Fellow with visa cannot moonlight outside home hospital
+        }
+      }
+
       // 3. Check for shift conflicts (already assigned to same date/shift)
       const existingAssignments = await ctx.db
         .query("scenario_assignments")
@@ -185,6 +193,7 @@ export const findMatchesForPosition = query({
         isHomeDepartment: provider.departmentId === position.departmentId,
         isHomeHospital: provider.hospitalId === position.hospitalId,
         availabilityNotes: availability?.notes,
+        hasVisa: provider.hasVisa ?? false,
       });
     }
 

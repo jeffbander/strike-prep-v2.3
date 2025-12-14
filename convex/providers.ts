@@ -1,5 +1,6 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { Id } from "./_generated/dataModel";
 
 /**
  * Create a single provider
@@ -18,6 +19,7 @@ export const create = mutation({
     supervisingPhysician: v.optional(v.string()),
     specialtyCertification: v.optional(v.string()),
     previousExperience: v.optional(v.string()),
+    hasVisa: v.optional(v.boolean()),
     skillIds: v.optional(v.array(v.id("skills"))),
   },
   handler: async (ctx, args) => {
@@ -50,6 +52,7 @@ export const create = mutation({
       supervisingPhysician: args.supervisingPhysician,
       specialtyCertification: args.specialtyCertification,
       previousExperience: args.previousExperience,
+      hasVisa: args.hasVisa,
       createdBy: currentUser._id,
       isActive: true,
       createdAt: Date.now(),
@@ -573,6 +576,7 @@ export const update = mutation({
     supervisingPhysician: v.optional(v.string()),
     specialtyCertification: v.optional(v.string()),
     previousExperience: v.optional(v.string()),
+    hasVisa: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -581,7 +585,8 @@ export const update = mutation({
     const provider = await ctx.db.get(args.providerId);
     if (!provider) throw new Error("Provider not found");
 
-    const updates: Record<string, string | undefined> = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updates: Record<string, any> = {};
     if (args.firstName !== undefined) updates.firstName = args.firstName;
     if (args.lastName !== undefined) updates.lastName = args.lastName;
     if (args.email !== undefined) updates.email = args.email;
@@ -592,6 +597,7 @@ export const update = mutation({
     if (args.supervisingPhysician !== undefined) updates.supervisingPhysician = args.supervisingPhysician;
     if (args.specialtyCertification !== undefined) updates.specialtyCertification = args.specialtyCertification;
     if (args.previousExperience !== undefined) updates.previousExperience = args.previousExperience;
+    if (args.hasVisa !== undefined) updates.hasVisa = args.hasVisa;
 
     // Handle jobTypeId separately since it's an Id type
     if (args.jobTypeId !== undefined) {
@@ -643,3 +649,401 @@ export const getHospitalAccess = query({
     return hospitals.filter(Boolean);
   },
 });
+
+/**
+ * Get provider export data for CSV/Excel export
+ * Returns all providers with reference data for import template
+ */
+export const getProviderExportData = query({
+  args: {
+    healthSystemId: v.optional(v.id("health_systems")),
+    hospitalId: v.optional(v.id("hospitals")),
+    departmentId: v.optional(v.id("departments")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const currentUser = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+    if (!currentUser) return null;
+
+    // Determine health system to query
+    let healthSystemId = args.healthSystemId;
+    if (!healthSystemId && currentUser.healthSystemId) {
+      healthSystemId = currentUser.healthSystemId;
+    }
+    if (!healthSystemId) return null;
+
+    // Query providers based on scope
+    let providers;
+    if (args.departmentId) {
+      const deptId = args.departmentId;
+      providers = await ctx.db
+        .query("providers")
+        .withIndex("by_department", (q) => q.eq("departmentId", deptId))
+        .collect();
+    } else if (args.hospitalId) {
+      const hospId = args.hospitalId;
+      providers = await ctx.db
+        .query("providers")
+        .withIndex("by_hospital", (q) => q.eq("hospitalId", hospId))
+        .collect();
+    } else {
+      providers = await ctx.db
+        .query("providers")
+        .withIndex("by_health_system", (q) => q.eq("healthSystemId", healthSystemId))
+        .collect();
+    }
+
+    // Build rows with all CSV fields
+    const rows = await Promise.all(
+      providers.map(async (p) => {
+        const jobType = await ctx.db.get(p.jobTypeId);
+        const hospital = await ctx.db.get(p.hospitalId);
+        const department = await ctx.db.get(p.departmentId);
+
+        // Get provider skills
+        const skillLinks = await ctx.db
+          .query("provider_skills")
+          .withIndex("by_provider", (q) => q.eq("providerId", p._id))
+          .collect();
+        const skills = await Promise.all(
+          skillLinks.map(async (link) => {
+            const skill = await ctx.db.get(link.skillId);
+            return skill?.name || "";
+          })
+        );
+
+        return {
+          role: jobType?.code || "",
+          lastName: p.lastName,
+          firstName: p.firstName,
+          employeeId: p.employeeId || "",
+          cellPhone: p.cellPhone || "",
+          email: p.email || "",
+          currentScheduleDays: p.currentScheduleDays || "",
+          currentScheduleTime: p.currentScheduleTime || "",
+          homeSite: hospital?.shortCode || "",
+          homeDepartment: department?.name || "",
+          supervisingPhysician: p.supervisingPhysician || "",
+          specialtyCertification: p.specialtyCertification || "",
+          previousExperience: p.previousExperience || "",
+          hasVisa: p.hasVisa ? "Yes" : "No",
+          skills: skills.filter(Boolean).join(", "),
+        };
+      })
+    );
+
+    // Get reference data for template
+    const availableRoles = await ctx.db
+      .query("job_types")
+      .withIndex("by_health_system", (q) => q.eq("healthSystemId", healthSystemId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    const availableSkills = await ctx.db
+      .query("skills")
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    const availableHospitals = await ctx.db
+      .query("hospitals")
+      .withIndex("by_health_system", (q) => q.eq("healthSystemId", healthSystemId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    // Get departments for all hospitals
+    const availableDepartments = await Promise.all(
+      availableHospitals.map(async (hospital) => {
+        const depts = await ctx.db
+          .query("departments")
+          .withIndex("by_hospital", (q) => q.eq("hospitalId", hospital._id))
+          .filter((q) => q.eq(q.field("isActive"), true))
+          .collect();
+        return depts.map((d) => ({
+          ...d,
+          hospitalShortCode: hospital.shortCode,
+        }));
+      })
+    );
+
+    return {
+      rows,
+      availableRoles: availableRoles.map((r) => ({ name: r.name, code: r.code })),
+      availableSkills: availableSkills.map((s) => ({ name: s.name, category: s.category })),
+      availableHospitals: availableHospitals.map((h) => ({
+        name: h.name,
+        shortCode: h.shortCode,
+      })),
+      availableDepartments: availableDepartments.flat().map((d) => ({
+        name: d.name,
+        hospitalShortCode: d.hospitalShortCode,
+      })),
+      existingEmails: providers
+        .filter((p) => p.email)
+        .map((p) => p.email!.toLowerCase()),
+    };
+  },
+});
+
+/**
+ * Bulk upsert providers from CSV/Excel
+ * Email is the unique key - updates existing provider if email matches, creates new otherwise
+ */
+export const bulkUpsertProviders = mutation({
+  args: {
+    healthSystemId: v.id("health_systems"),
+    rows: v.array(
+      v.object({
+        role: v.string(), // Job type code (e.g., "MD", "NP", "PA", "RN", "FEL", "RES")
+        lastName: v.string(),
+        firstName: v.string(),
+        employeeId: v.optional(v.string()),
+        cellPhone: v.string(), // Required per user requirements
+        email: v.string(), // Required, unique key for upsert
+        currentScheduleDays: v.optional(v.string()),
+        currentScheduleTime: v.optional(v.string()),
+        homeSite: v.string(), // Hospital short code
+        homeDepartment: v.string(), // Department name
+        supervisingPhysician: v.optional(v.string()),
+        specialtyCertification: v.optional(v.string()),
+        previousExperience: v.optional(v.string()),
+        hasVisa: v.boolean(),
+        skills: v.array(v.string()), // Skill names
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+
+    const currentUser = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+    if (!currentUser) throw new Error("User not found");
+
+    // Verify health system access
+    if (
+      currentUser.role !== "super_admin" &&
+      currentUser.healthSystemId !== args.healthSystemId
+    ) {
+      throw new Error("Access denied to this health system");
+    }
+
+    // Build lookup maps for validation
+    const jobTypes = await ctx.db
+      .query("job_types")
+      .withIndex("by_health_system", (q) => q.eq("healthSystemId", args.healthSystemId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+    const jobTypeByCode = new Map(
+      jobTypes.map((jt) => [jt.code.toUpperCase(), jt])
+    );
+
+    const hospitals = await ctx.db
+      .query("hospitals")
+      .withIndex("by_health_system", (q) => q.eq("healthSystemId", args.healthSystemId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+    const hospitalByCode = new Map(
+      hospitals.map((h) => [h.shortCode.toUpperCase(), h])
+    );
+
+    const skills = await ctx.db
+      .query("skills")
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+    const skillByName = new Map(skills.map((s) => [s.name.toUpperCase(), s]));
+
+    const results = {
+      created: 0,
+      updated: 0,
+      errors: [] as string[],
+    };
+
+    for (let i = 0; i < args.rows.length; i++) {
+      const row = args.rows[i];
+      const rowNum = i + 2; // Account for header row in original file
+
+      try {
+        // Validate role
+        const jobType = jobTypeByCode.get(row.role.toUpperCase());
+        if (!jobType) {
+          results.errors.push(`Row ${rowNum}: Unknown role "${row.role}"`);
+          continue;
+        }
+
+        // Validate hospital
+        const hospital = hospitalByCode.get(row.homeSite.toUpperCase());
+        if (!hospital) {
+          results.errors.push(`Row ${rowNum}: Unknown home site "${row.homeSite}"`);
+          continue;
+        }
+
+        // Validate department (within hospital) - case-insensitive match
+        const hospitalDepartments = await ctx.db
+          .query("departments")
+          .withIndex("by_hospital", (q) => q.eq("hospitalId", hospital._id))
+          .filter((q) => q.eq(q.field("isActive"), true))
+          .collect();
+        const department = hospitalDepartments.find(
+          (d) => d.name.toLowerCase() === row.homeDepartment.toLowerCase()
+        );
+        if (!department) {
+          results.errors.push(
+            `Row ${rowNum}: Unknown department "${row.homeDepartment}" in ${row.homeSite}`
+          );
+          continue;
+        }
+
+        // Validate skills - reject row if any skill is unknown
+        const validSkillIds: typeof skills[0]["_id"][] = [];
+        let hasInvalidSkill = false;
+        for (const skillName of row.skills) {
+          if (!skillName.trim()) continue;
+          const skill = skillByName.get(skillName.trim().toUpperCase());
+          if (skill) {
+            validSkillIds.push(skill._id);
+          } else {
+            results.errors.push(
+              `Row ${rowNum}: Unknown skill "${skillName}" - row rejected`
+            );
+            hasInvalidSkill = true;
+            break;
+          }
+        }
+        if (hasInvalidSkill) continue;
+
+        // Check for existing provider by email (within health system)
+        const normalizedEmail = row.email.toLowerCase().trim();
+        const existingProvider = await ctx.db
+          .query("providers")
+          .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+          .filter((q) => q.eq(q.field("healthSystemId"), args.healthSystemId))
+          .first();
+
+        if (existingProvider) {
+          // UPDATE existing provider
+          await ctx.db.patch(existingProvider._id, {
+            jobTypeId: jobType._id,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            employeeId: row.employeeId,
+            cellPhone: row.cellPhone,
+            currentScheduleDays: row.currentScheduleDays,
+            currentScheduleTime: row.currentScheduleTime,
+            hospitalId: hospital._id,
+            departmentId: department._id,
+            supervisingPhysician: row.supervisingPhysician,
+            specialtyCertification: row.specialtyCertification,
+            previousExperience: row.previousExperience,
+            hasVisa: row.hasVisa,
+            updatedAt: Date.now(),
+          });
+
+          // Sync skills
+          await syncProviderSkills(ctx, existingProvider._id, validSkillIds);
+
+          // Update hospital access if home hospital changed
+          if (existingProvider.hospitalId !== hospital._id) {
+            // Ensure new home hospital is in access list
+            const existingAccess = await ctx.db
+              .query("provider_hospital_access")
+              .withIndex("by_provider", (q) =>
+                q.eq("providerId", existingProvider._id)
+              )
+              .filter((q) => q.eq(q.field("hospitalId"), hospital._id))
+              .first();
+            if (!existingAccess) {
+              await ctx.db.insert("provider_hospital_access", {
+                providerId: existingProvider._id,
+                hospitalId: hospital._id,
+              });
+            }
+          }
+
+          results.updated++;
+        } else {
+          // CREATE new provider
+          const providerId = await ctx.db.insert("providers", {
+            healthSystemId: args.healthSystemId,
+            hospitalId: hospital._id,
+            departmentId: department._id,
+            jobTypeId: jobType._id,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            email: normalizedEmail,
+            employeeId: row.employeeId,
+            cellPhone: row.cellPhone,
+            currentScheduleDays: row.currentScheduleDays,
+            currentScheduleTime: row.currentScheduleTime,
+            supervisingPhysician: row.supervisingPhysician,
+            specialtyCertification: row.specialtyCertification,
+            previousExperience: row.previousExperience,
+            hasVisa: row.hasVisa,
+            createdBy: currentUser._id,
+            isActive: true,
+            createdAt: Date.now(),
+          });
+
+          // Add home hospital to access list
+          await ctx.db.insert("provider_hospital_access", {
+            providerId,
+            hospitalId: hospital._id,
+          });
+
+          // Add skills
+          for (const skillId of validSkillIds) {
+            await ctx.db.insert("provider_skills", {
+              providerId,
+              skillId,
+            });
+          }
+
+          results.created++;
+        }
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        results.errors.push(`Row ${rowNum}: ${message}`);
+      }
+    }
+
+    return results;
+  },
+});
+
+/**
+ * Helper: Sync provider skills (remove old, add new)
+ */
+async function syncProviderSkills(
+  ctx: MutationCtx,
+  providerId: Id<"providers">,
+  newSkillIds: Id<"skills">[]
+) {
+  // Get existing skills
+  const existingLinks = await ctx.db
+    .query("provider_skills")
+    .withIndex("by_provider", (q) => q.eq("providerId", providerId))
+    .collect();
+
+  const existingIds = new Set(existingLinks.map((l) => l.skillId.toString()));
+  const newIds = new Set(newSkillIds.map((id) => id.toString()));
+
+  // Remove skills no longer in list
+  for (const link of existingLinks) {
+    if (!newIds.has(link.skillId.toString())) {
+      await ctx.db.delete(link._id);
+    }
+  }
+
+  // Add new skills
+  for (const skillId of newSkillIds) {
+    if (!existingIds.has(skillId.toString())) {
+      await ctx.db.insert("provider_skills", { providerId, skillId });
+    }
+  }
+}

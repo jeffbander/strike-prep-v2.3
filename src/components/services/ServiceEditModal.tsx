@@ -22,6 +22,13 @@ interface ShiftData {
   isActive: boolean;
 }
 
+interface SkillData {
+  _id: Id<"skills">;
+  name: string;
+  category: string;
+  isRequired: boolean;
+}
+
 interface JobTypeData {
   _id: Id<"service_job_types">;
   jobType: {
@@ -30,6 +37,7 @@ interface JobTypeData {
     code: string;
   } | null;
   shifts: ShiftData[];
+  skills: SkillData[];
   dayShiftStart?: string;
   dayShiftEnd?: string;
   nightShiftStart?: string;
@@ -391,6 +399,30 @@ export default function ServiceEditModal({
                       {jobTypeData.jobType?.code}
                     </p>
                   </div>
+                </div>
+
+                {/* Skills for this role */}
+                <div className="pt-2 pb-3 border-b border-slate-600">
+                  <p className="text-xs text-slate-400 mb-2">Required Skills:</p>
+                  {jobTypeData.skills && jobTypeData.skills.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {jobTypeData.skills.map((skill: SkillData) => (
+                        <span
+                          key={skill._id}
+                          className={`px-2 py-1 rounded text-xs ${
+                            skill.isRequired
+                              ? "bg-amber-600/30 text-amber-300 border border-amber-600/50"
+                              : "bg-slate-600 text-slate-300"
+                          }`}
+                          title={`Category: ${skill.category}${skill.isRequired ? " (Required)" : " (Preferred)"}`}
+                        >
+                          {skill.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 italic">No skills assigned. Use Import Staffing to add skills.</p>
+                  )}
                 </div>
 
                 {/* Shifts for this job type */}

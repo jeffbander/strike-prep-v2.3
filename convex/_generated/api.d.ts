@@ -13,6 +13,7 @@ import type * as departments from "../departments.js";
 import type * as exports from "../exports.js";
 import type * as healthSystems from "../healthSystems.js";
 import type * as hospitals from "../hospitals.js";
+import type * as http from "../http.js";
 import type * as jobTypes from "../jobTypes.js";
 import type * as laborPool from "../laborPool.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -26,6 +27,7 @@ import type * as scenarios from "../scenarios.js";
 import type * as seed from "../seed.js";
 import type * as services from "../services.js";
 import type * as skills from "../skills.js";
+import type * as sms from "../sms.js";
 import type * as units from "../units.js";
 import type * as users from "../users.js";
 
@@ -41,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   exports: typeof exports;
   healthSystems: typeof healthSystems;
   hospitals: typeof hospitals;
+  http: typeof http;
   jobTypes: typeof jobTypes;
   laborPool: typeof laborPool;
   "lib/auth": typeof lib_auth;
@@ -54,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   services: typeof services;
   skills: typeof skills;
+  sms: typeof sms;
   units: typeof units;
   users: typeof users;
 }>;

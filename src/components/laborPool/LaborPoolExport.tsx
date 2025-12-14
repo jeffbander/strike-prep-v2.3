@@ -18,7 +18,7 @@ export default function LaborPoolExport({ departmentId, departmentName }: LaborP
 
     const workbook = XLSX.utils.book_new();
 
-    // Sheet 1: Labor Pool Data
+    // Sheet 1: Current Staffing Data
     const headers = [
       "Service",
       "Short Code",
@@ -55,7 +55,7 @@ export default function LaborPoolExport({ departmentId, departmentName }: LaborP
       { wch: 40 }, // Skills
     ];
 
-    XLSX.utils.book_append_sheet(workbook, laborPoolSheet, "Labor Pool");
+    XLSX.utils.book_append_sheet(workbook, laborPoolSheet, "Current Staffing");
 
     // Sheet 2: Reference (available roles and skills)
     const rolesHeader = ["Available Roles", "Code"];
@@ -81,7 +81,7 @@ export default function LaborPoolExport({ departmentId, departmentName }: LaborP
 
     // Generate filename with date
     const date = new Date().toISOString().split("T")[0];
-    const filename = `${departmentName.replace(/[^a-zA-Z0-9]/g, "_")}_LaborPool_${date}.xlsx`;
+    const filename = `${departmentName.replace(/[^a-zA-Z0-9]/g, "_")}_Staffing_${date}.xlsx`;
 
     // Trigger download
     XLSX.writeFile(workbook, filename);
@@ -95,7 +95,7 @@ export default function LaborPoolExport({ departmentId, departmentName }: LaborP
       onClick={handleDownload}
       disabled={isLoading}
       className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed rounded-lg text-sm transition-colors flex items-center gap-2"
-      title={isEmpty ? "No services to export" : "Download labor pool as Excel"}
+      title={isEmpty ? "No services to export" : "Download current staffing as Excel"}
     >
       <svg
         className="w-4 h-4"
@@ -110,7 +110,7 @@ export default function LaborPoolExport({ departmentId, departmentName }: LaborP
           d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
         />
       </svg>
-      {isLoading ? "Loading..." : "Export Labor Pool"}
+      {isLoading ? "Loading..." : "Export Staffing"}
     </button>
   );
 }
