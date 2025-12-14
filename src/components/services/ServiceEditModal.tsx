@@ -37,7 +37,7 @@ interface JobTypeData {
     code: string;
   } | null;
   shifts: ShiftData[];
-  skills: SkillData[];
+  skills: (SkillData | null)[];
   dayShiftStart?: string;
   dayShiftEnd?: string;
   nightShiftStart?: string;
@@ -404,9 +404,9 @@ export default function ServiceEditModal({
                 {/* Skills for this role */}
                 <div className="pt-2 pb-3 border-b border-slate-600">
                   <p className="text-xs text-slate-400 mb-2">Required Skills:</p>
-                  {jobTypeData.skills && jobTypeData.skills.length > 0 ? (
+                  {jobTypeData.skills && jobTypeData.skills.filter(Boolean).length > 0 ? (
                     <div className="flex flex-wrap gap-2">
-                      {jobTypeData.skills.map((skill: SkillData) => (
+                      {jobTypeData.skills.filter((skill): skill is SkillData => skill !== null).map((skill) => (
                         <span
                           key={skill._id}
                           className={`px-2 py-1 rounded text-xs ${
