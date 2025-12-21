@@ -533,3 +533,230 @@ export const getAssignments = query({
     });
   },
 });
+
+/**
+ * Get grid data for scenario matching view
+ * Returns positions grouped by service/role and organized by date/shift
+ */
+export const getGridData = query({
+  args: {
+    scenarioId: v.id("strike_scenarios"),
+  },
+  handler: async (ctx, args) => {
+    const scenario = await ctx.db.get(args.scenarioId);
+    if (!scenario) return { error: "Scenario not found", services: [], dates: [] };
+
+    // Get all positions for this scenario
+    const positions = await ctx.db
+      .query("scenario_positions")
+      .withIndex("by_scenario", (q) => q.eq("scenarioId", args.scenarioId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    // Get all assignments for this scenario
+    const assignments = await ctx.db
+      .query("scenario_assignments")
+      .withIndex("by_scenario", (q) => q.eq("scenarioId", args.scenarioId))
+      .filter((q) => q.neq(q.field("status"), "Cancelled"))
+      .collect();
+
+    // Create assignment lookup
+    const assignmentByPosition = new Map<string, any>();
+    for (const assignment of assignments) {
+      const provider = await ctx.db.get(assignment.providerId);
+      assignmentByPosition.set(assignment.scenarioPositionId.toString(), {
+        ...assignment,
+        providerName: provider ? `${provider.firstName} ${provider.lastName}` : "Unknown",
+        providerInitials: provider
+          ? `${provider.firstName[0]}${provider.lastName[0]}`
+          : "??",
+      });
+    }
+
+    // Get unique dates and sort them
+    const dates = [...new Set(positions.map((p) => p.date))].sort();
+
+    // Group positions by service + jobType
+    const serviceJobTypeGroups = new Map<string, any>();
+
+    for (const position of positions) {
+      const service = await ctx.db.get(position.serviceId);
+      const jobType = await ctx.db.get(position.jobTypeId);
+      if (!service || !jobType) continue;
+
+      const key = `${position.serviceId}-${position.jobTypeId}`;
+
+      if (!serviceJobTypeGroups.has(key)) {
+        serviceJobTypeGroups.set(key, {
+          serviceId: position.serviceId,
+          serviceName: service.name,
+          serviceCode: service.shortCode,
+          jobTypeId: position.jobTypeId,
+          jobTypeName: jobType.name,
+          jobTypeCode: jobType.code,
+          positions: new Map<number, any>(), // positionNumber -> date/shift data
+          maxPositionNumber: 0,
+        });
+      }
+
+      const group = serviceJobTypeGroups.get(key)!;
+      group.maxPositionNumber = Math.max(group.maxPositionNumber, position.positionNumber);
+
+      if (!group.positions.has(position.positionNumber)) {
+        group.positions.set(position.positionNumber, {});
+      }
+
+      const posData = group.positions.get(position.positionNumber)!;
+      const dateShiftKey = `${position.date}-${position.shiftType}`;
+
+      const assignment = assignmentByPosition.get(position._id.toString());
+
+      posData[dateShiftKey] = {
+        positionId: position._id,
+        status: position.status,
+        providerName: assignment?.providerName,
+        providerInitials: assignment?.providerInitials,
+        providerId: assignment?.providerId,
+        assignmentId: assignment?._id,
+        assignmentStatus: assignment?.status,
+      };
+    }
+
+    // Convert to array format for the grid
+    const services = Array.from(serviceJobTypeGroups.values()).map((group) => ({
+      serviceId: group.serviceId,
+      serviceName: group.serviceName,
+      serviceCode: group.serviceCode,
+      jobTypeId: group.jobTypeId,
+      jobTypeName: group.jobTypeName,
+      jobTypeCode: group.jobTypeCode,
+      positionCount: group.maxPositionNumber,
+      rows: Array.from({ length: group.maxPositionNumber }, (_, i) => {
+        const positionNumber = i + 1;
+        const posData = group.positions.get(positionNumber) || {};
+
+        // Build shifts array for each date
+        const shifts: any[] = [];
+        for (const date of dates) {
+          const amKey = `${date}-AM`;
+          const pmKey = `${date}-PM`;
+          shifts.push({
+            date,
+            am: posData[amKey] || null,
+            pm: posData[pmKey] || null,
+          });
+        }
+
+        return {
+          positionNumber,
+          shifts,
+        };
+      }),
+    }));
+
+    // Sort services by name then job type
+    services.sort((a, b) => {
+      if (a.serviceName !== b.serviceName) return a.serviceName.localeCompare(b.serviceName);
+      return a.jobTypeCode.localeCompare(b.jobTypeCode);
+    });
+
+    return {
+      scenarioName: scenario.name,
+      startDate: scenario.startDate,
+      endDate: scenario.endDate,
+      dates,
+      services,
+    };
+  },
+});
+
+/**
+ * Get available providers for drag-and-drop assignment
+ */
+export const getAvailableProviders = query({
+  args: {
+    scenarioId: v.id("strike_scenarios"),
+    date: v.string(),
+    shiftType: v.string(),
+    jobTypeId: v.optional(v.id("job_types")),
+  },
+  handler: async (ctx, args) => {
+    // Get providers, optionally filtered by job type
+    let providers;
+    const jobTypeId = args.jobTypeId;
+    if (jobTypeId) {
+      providers = await ctx.db
+        .query("providers")
+        .withIndex("by_job_type", (q) => q.eq("jobTypeId", jobTypeId))
+        .filter((q) => q.eq(q.field("isActive"), true))
+        .collect();
+    } else {
+      providers = await ctx.db
+        .query("providers")
+        .filter((q) => q.eq(q.field("isActive"), true))
+        .collect();
+    }
+
+    const availableProviders: any[] = [];
+
+    for (const provider of providers) {
+      // Check availability
+      const availability = await ctx.db
+        .query("provider_availability")
+        .withIndex("by_provider_date", (q) =>
+          q.eq("providerId", provider._id).eq("date", args.date)
+        )
+        .first();
+
+      let isAvailable = true;
+      let isPreferred = false;
+
+      if (availability) {
+        if (availability.availabilityType === "unavailable") continue;
+        isAvailable = args.shiftType === "AM" ? availability.amAvailable : availability.pmAvailable;
+        isPreferred = args.shiftType === "AM"
+          ? availability.amPreferred ?? false
+          : availability.pmPreferred ?? false;
+        if (!isAvailable) continue;
+      }
+
+      // Check for existing assignment conflicts
+      const existingAssignments = await ctx.db
+        .query("scenario_assignments")
+        .withIndex("by_provider_scenario", (q) =>
+          q.eq("providerId", provider._id).eq("scenarioId", args.scenarioId)
+        )
+        .filter((q) => q.neq(q.field("status"), "Cancelled"))
+        .collect();
+
+      let hasConflict = false;
+      for (const assignment of existingAssignments) {
+        const pos = await ctx.db.get(assignment.scenarioPositionId);
+        if (pos && pos.date === args.date && pos.shiftType === args.shiftType) {
+          hasConflict = true;
+          break;
+        }
+      }
+      if (hasConflict) continue;
+
+      const jobType = await ctx.db.get(provider.jobTypeId);
+
+      availableProviders.push({
+        id: provider._id,
+        name: `${provider.firstName} ${provider.lastName}`,
+        initials: `${provider.firstName[0]}${provider.lastName[0]}`,
+        jobType: jobType?.code || "?",
+        isPreferred,
+        assignmentCount: existingAssignments.length,
+      });
+    }
+
+    // Sort by preferred first, then by assignment count (fewer first)
+    availableProviders.sort((a, b) => {
+      if (a.isPreferred !== b.isPreferred) return a.isPreferred ? -1 : 1;
+      return a.assignmentCount - b.assignmentCount;
+    });
+
+    return availableProviders;
+  },
+});
