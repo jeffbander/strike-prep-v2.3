@@ -1,6 +1,68 @@
 import { Id } from "../../../convex/_generated/dataModel";
 
 /**
+ * Service type classification
+ * - "admit": Inpatient services that admit patients (ICU, Tele, Med-Surg)
+ * - "procedure": Procedural services (Cath Lab, OR, EP Lab)
+ * - "consult": Consultation services
+ * - "remote": Remote/telemedicine services
+ */
+export type ServiceType = "admit" | "procedure" | "consult" | "remote";
+
+/**
+ * Feeder source for admit services
+ * - "er": Patients come from Emergency Room
+ * - "procedure": Patients come from linked procedure services
+ */
+export type FeederSource = "er" | "procedure";
+
+/**
+ * Service type display configuration
+ */
+export const SERVICE_TYPES: Record<
+  ServiceType,
+  { label: string; description: string; color: string }
+> = {
+  admit: {
+    label: "Admit",
+    description: "Inpatient services that admit patients (ICU, Tele, Med-Surg)",
+    color: "bg-blue-500",
+  },
+  procedure: {
+    label: "Procedure",
+    description: "Procedural services (Cath Lab, OR, EP Lab)",
+    color: "bg-purple-500",
+  },
+  consult: {
+    label: "Consult",
+    description: "Consultation services",
+    color: "bg-green-500",
+  },
+  remote: {
+    label: "Remote",
+    description: "Remote/telemedicine services",
+    color: "bg-cyan-500",
+  },
+};
+
+/**
+ * Feeder source display configuration
+ */
+export const FEEDER_SOURCES: Record<
+  FeederSource,
+  { label: string; description: string }
+> = {
+  er: {
+    label: "Emergency Room",
+    description: "Patients admitted from the ER",
+  },
+  procedure: {
+    label: "Procedure Service",
+    description: "Patients transferred from procedure services",
+  },
+};
+
+/**
  * Configuration for a single shift within a job type
  */
 export interface ShiftConfig {
@@ -36,6 +98,14 @@ export interface ServiceWizardState {
   unitId?: string;
   name: string;
   shortCode: string;
+
+  // Service Type Classification
+  serviceType?: ServiceType;
+  // Admit Service Configuration
+  admitCapacity?: number; // New patient admissions capacity
+  feederSource?: FeederSource; // Where patients come from
+  // Procedure Service Configuration
+  linkedDownstreamServiceId?: string; // Which admit service receives patients
 
   // Step 2: Role Selection
   selectedJobTypeIds: string[];
@@ -108,6 +178,12 @@ export function getDefaultWizardState(
     unitId: undefined,
     name: "",
     shortCode: "",
+    // Service Type fields
+    serviceType: undefined,
+    admitCapacity: undefined,
+    feederSource: undefined,
+    linkedDownstreamServiceId: undefined,
+    // Role selection
     selectedJobTypeIds: [],
     operatesDays: true,
     operatesNights: true,
