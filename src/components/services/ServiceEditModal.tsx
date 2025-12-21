@@ -5,7 +5,14 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { toast } from "sonner";
 import { useState, useEffect } from "react";
-import { SHIFT_TYPES, ShiftType } from "./types";
+import {
+  SHIFT_TYPES,
+  ShiftType,
+  SERVICE_TYPES,
+  FEEDER_SOURCES,
+  ServiceType,
+  FeederSource,
+} from "./types";
 
 interface ServiceEditModalProps {
   serviceId: Id<"services">;
@@ -59,6 +66,14 @@ export default function ServiceEditModal({
   // Local state for editing
   const [serviceName, setServiceName] = useState("");
   const [serviceShortCode, setServiceShortCode] = useState("");
+  // Service Type fields
+  const [serviceType, setServiceType] = useState<ServiceType | undefined>();
+  const [admitCapacity, setAdmitCapacity] = useState<number | undefined>();
+  const [feederSource, setFeederSource] = useState<FeederSource | undefined>();
+  const [linkedDownstreamServiceId, setLinkedDownstreamServiceId] = useState<
+    string | undefined
+  >();
+  // Capacity fields
   const [dayCapacity, setDayCapacity] = useState<number | undefined>();
   const [nightCapacity, setNightCapacity] = useState<number | undefined>();
   const [weekendCapacity, setWeekendCapacity] = useState<number | undefined>();
@@ -70,11 +85,29 @@ export default function ServiceEditModal({
   const [nightShiftStart, setNightShiftStart] = useState("19:00");
   const [nightShiftEnd, setNightShiftEnd] = useState("07:00");
 
+  // Get admit services for linking when editing procedure type
+  const admitServices = useQuery(
+    api.services.listByType,
+    serviceDetails?.hospitalId && serviceType === "procedure"
+      ? {
+          serviceType: "admit",
+          hospitalId: serviceDetails.hospitalId,
+          excludeServiceId: serviceId,
+        }
+      : "skip"
+  );
+
   // Populate form when service data loads
   useEffect(() => {
     if (serviceDetails) {
       setServiceName(serviceDetails.name);
       setServiceShortCode(serviceDetails.shortCode);
+      // Service Type fields
+      setServiceType(serviceDetails.serviceType as ServiceType | undefined);
+      setAdmitCapacity(serviceDetails.admitCapacity);
+      setFeederSource(serviceDetails.feederSource as FeederSource | undefined);
+      setLinkedDownstreamServiceId(serviceDetails.linkedDownstreamServiceId);
+      // Capacity fields
       setDayCapacity(serviceDetails.dayCapacity);
       setNightCapacity(serviceDetails.nightCapacity);
       setWeekendCapacity(serviceDetails.weekendCapacity);
@@ -95,6 +128,14 @@ export default function ServiceEditModal({
         serviceId,
         name: serviceName,
         shortCode: serviceShortCode,
+        // Service Type fields
+        serviceType,
+        admitCapacity,
+        feederSource,
+        linkedDownstreamServiceId: linkedDownstreamServiceId
+          ? (linkedDownstreamServiceId as Id<"services">)
+          : undefined,
+        // Capacity fields
         dayCapacity,
         nightCapacity,
         weekendCapacity,
@@ -232,6 +273,176 @@ export default function ServiceEditModal({
                 />
               </div>
             </div>
+
+            {/* Service Type Classification */}
+            <div className="pt-4 border-t border-slate-600">
+              <h4 className="text-sm font-medium text-slate-300 mb-3">
+                Service Type
+              </h4>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {(
+                  Object.entries(SERVICE_TYPES) as [
+                    ServiceType,
+                    (typeof SERVICE_TYPES)[ServiceType]
+                  ][]
+                ).map(([type, config]) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => {
+                      setServiceType(type);
+                      // Reset type-specific fields when changing type
+                      if (type !== "admit") {
+                        setAdmitCapacity(undefined);
+                        setFeederSource(undefined);
+                      }
+                      if (type !== "procedure") {
+                        setLinkedDownstreamServiceId(undefined);
+                      }
+                    }}
+                    className={`p-3 rounded-lg border-2 transition-all text-left ${
+                      serviceType === type
+                        ? "border-emerald-500 bg-emerald-500/10"
+                        : "border-slate-500 hover:border-slate-400"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className={`w-3 h-3 rounded-full ${config.color}`} />
+                      <span className="font-medium text-white text-sm">
+                        {config.label}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">{config.description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Admit Service Configuration */}
+            {serviceType === "admit" && (
+              <div className="pt-4 border-t border-slate-600">
+                <h4 className="text-sm font-medium text-blue-400 mb-3">
+                  Admit Service Configuration
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">
+                      Admit Capacity
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={admitCapacity || ""}
+                      onChange={(e) =>
+                        setAdmitCapacity(
+                          e.target.value ? parseInt(e.target.value) : undefined
+                        )
+                      }
+                      placeholder="e.g., 10"
+                      className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded-lg focus:outline-none focus:border-emerald-500 text-white"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      New patient admissions toward capacity
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">
+                      Feeder Source
+                    </label>
+                    <select
+                      value={feederSource || ""}
+                      onChange={(e) =>
+                        setFeederSource(
+                          (e.target.value as FeederSource) || undefined
+                        )
+                      }
+                      className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded-lg focus:outline-none focus:border-emerald-500 text-white"
+                    >
+                      <option value="">Select source...</option>
+                      {(
+                        Object.entries(FEEDER_SOURCES) as [
+                          FeederSource,
+                          (typeof FEEDER_SOURCES)[FeederSource]
+                        ][]
+                      ).map(([source, config]) => (
+                        <option key={source} value={source}>
+                          {config.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Where patients are admitted from
+                    </p>
+                  </div>
+                </div>
+                {/* Show linked procedure services feeding into this admit service */}
+                {serviceDetails?.feederProcedureServices &&
+                  serviceDetails.feederProcedureServices.length > 0 && (
+                    <div className="mt-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                      <p className="text-xs text-purple-400 font-medium mb-2">
+                        Procedure services feeding into this service:
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {serviceDetails.feederProcedureServices.map(
+                          (ps: { _id: string; name: string; shortCode: string }) => (
+                            <span
+                              key={ps._id}
+                              className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs"
+                            >
+                              {ps.name} ({ps.shortCode})
+                            </span>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )}
+              </div>
+            )}
+
+            {/* Procedure Service Configuration */}
+            {serviceType === "procedure" && (
+              <div className="pt-4 border-t border-slate-600">
+                <h4 className="text-sm font-medium text-purple-400 mb-3">
+                  Procedure Service Configuration
+                </h4>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    Linked Downstream Service
+                  </label>
+                  <select
+                    value={linkedDownstreamServiceId || ""}
+                    onChange={(e) =>
+                      setLinkedDownstreamServiceId(e.target.value || undefined)
+                    }
+                    className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded-lg focus:outline-none focus:border-emerald-500 text-white"
+                  >
+                    <option value="">Select admit service...</option>
+                    {admitServices?.map((service) => (
+                      <option key={service._id} value={service._id}>
+                        {service.name} ({service.shortCode})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">
+                    The admit service that receives patients from this procedure.
+                    When this service closes in a scenario, the linked service's
+                    census will be reduced.
+                  </p>
+                </div>
+                {/* Show currently linked service */}
+                {serviceDetails?.linkedDownstreamService && (
+                  <div className="mt-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                    <p className="text-xs text-blue-400">
+                      Currently linked to:{" "}
+                      <span className="font-medium">
+                        {serviceDetails.linkedDownstreamService.name} (
+                        {serviceDetails.linkedDownstreamService.shortCode})
+                      </span>
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Operating Schedule */}
             <div className="pt-4 border-t border-slate-600">

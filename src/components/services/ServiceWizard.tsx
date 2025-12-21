@@ -166,6 +166,14 @@ export default function ServiceWizard({
         unitId: wizardState.unitId
           ? (wizardState.unitId as Id<"units">)
           : undefined,
+        // Service Type fields
+        serviceType: wizardState.serviceType,
+        admitCapacity: wizardState.admitCapacity,
+        feederSource: wizardState.feederSource,
+        linkedDownstreamServiceId: wizardState.linkedDownstreamServiceId
+          ? (wizardState.linkedDownstreamServiceId as Id<"services">)
+          : undefined,
+        // Capacity fields
         dayCapacity: wizardState.dayCapacity,
         nightCapacity: wizardState.nightCapacity,
         weekendCapacity: wizardState.weekendCapacity,

@@ -2,7 +2,13 @@
 
 import { useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
-import { WizardStepProps } from "../types";
+import {
+  WizardStepProps,
+  SERVICE_TYPES,
+  FEEDER_SOURCES,
+  ServiceType,
+  FeederSource,
+} from "../types";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { useEffect, useState } from "react";
 
@@ -22,6 +28,17 @@ export default function Step1ServiceBasics({
     api.units.list,
     selectedHospitalId
       ? { hospitalId: selectedHospitalId as Id<"hospitals"> }
+      : "skip"
+  );
+
+  // Get admit services for linking when service type is "procedure"
+  const admitServices = useQuery(
+    api.services.listByType,
+    selectedHospitalId && wizardState.serviceType === "procedure"
+      ? {
+          serviceType: "admit",
+          hospitalId: selectedHospitalId as Id<"hospitals">,
+        }
       : "skip"
   );
 
@@ -185,6 +202,136 @@ export default function Step1ServiceBasics({
           Optional: Assign this service to a specific floor or unit
         </p>
       </div>
+
+      {/* Service Type Classification */}
+      <div className="pt-4 border-t border-slate-700">
+        <h4 className="text-lg font-medium mb-3">Service Type</h4>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {(Object.entries(SERVICE_TYPES) as [ServiceType, typeof SERVICE_TYPES[ServiceType]][]).map(
+            ([type, config]) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() =>
+                  updateWizardState({
+                    serviceType: type,
+                    // Reset type-specific fields when changing type
+                    admitCapacity: undefined,
+                    feederSource: undefined,
+                    linkedDownstreamServiceId: undefined,
+                  })
+                }
+                className={`p-3 rounded-lg border-2 transition-all text-left ${
+                  wizardState.serviceType === type
+                    ? "border-emerald-500 bg-emerald-500/10"
+                    : "border-slate-600 hover:border-slate-500"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <div className={`w-3 h-3 rounded-full ${config.color}`} />
+                  <span className="font-medium">{config.label}</span>
+                </div>
+                <p className="text-xs text-slate-400">{config.description}</p>
+              </button>
+            )
+          )}
+        </div>
+      </div>
+
+      {/* Admit Service Configuration */}
+      {wizardState.serviceType === "admit" && (
+        <div className="space-y-4 p-4 bg-slate-700/50 rounded-lg">
+          <h4 className="text-sm font-medium text-blue-400">
+            Admit Service Configuration
+          </h4>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-slate-400 mb-2">
+                Admit Capacity
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={wizardState.admitCapacity || ""}
+                onChange={(e) =>
+                  updateWizardState({
+                    admitCapacity: e.target.value
+                      ? parseInt(e.target.value)
+                      : undefined,
+                  })
+                }
+                placeholder="e.g., 10"
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-emerald-500 text-white placeholder-slate-500"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                New patient admissions that count toward total capacity
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-2">
+                Feeder Source
+              </label>
+              <select
+                value={wizardState.feederSource || ""}
+                onChange={(e) =>
+                  updateWizardState({
+                    feederSource: (e.target.value as FeederSource) || undefined,
+                  })
+                }
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-emerald-500 text-white"
+              >
+                <option value="">Select source...</option>
+                {(Object.entries(FEEDER_SOURCES) as [FeederSource, typeof FEEDER_SOURCES[FeederSource]][]).map(
+                  ([source, config]) => (
+                    <option key={source} value={source}>
+                      {config.label}
+                    </option>
+                  )
+                )}
+              </select>
+              <p className="text-xs text-slate-500 mt-1">
+                Where patients are admitted from
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Procedure Service Configuration */}
+      {wizardState.serviceType === "procedure" && (
+        <div className="space-y-4 p-4 bg-slate-700/50 rounded-lg">
+          <h4 className="text-sm font-medium text-purple-400">
+            Procedure Service Configuration
+          </h4>
+          <div>
+            <label className="block text-sm text-slate-400 mb-2">
+              Linked Downstream Service
+            </label>
+            <select
+              value={wizardState.linkedDownstreamServiceId || ""}
+              onChange={(e) =>
+                updateWizardState({
+                  linkedDownstreamServiceId: e.target.value || undefined,
+                })
+              }
+              disabled={!selectedHospitalId}
+              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-emerald-500 text-white disabled:opacity-50"
+            >
+              <option value="">Select admit service...</option>
+              {admitServices?.map((service) => (
+                <option key={service._id} value={service._id}>
+                  {service.name} ({service.shortCode})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-500 mt-1">
+              The admit service that receives patients from this procedure
+              (e.g., Cath Lab → Tele). When this procedure service closes,
+              the linked service's census will be reduced.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Navigation */}
       <div className="flex justify-end gap-2 pt-4 border-t border-slate-700">

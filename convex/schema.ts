@@ -149,6 +149,24 @@ export default defineSchema({
     shortCode: v.string(), // For job code generation
     unitId: v.optional(v.id("units")),
 
+    // Service Type Classification
+    // - "admit": Inpatient services that admit patients (ICU, Tele, Med-Surg)
+    // - "procedure": Procedural services (Cath Lab, OR, EP Lab)
+    // - "consult": Consultation services
+    // - "remote": Remote/telemedicine services
+    serviceType: v.optional(v.string()), // "admit" | "procedure" | "consult" | "remote"
+
+    // Admit Service Configuration (only for serviceType = "admit")
+    // New patient admissions that count toward total capacity
+    admitCapacity: v.optional(v.number()),
+    // Where patients are fed from: "er" = Emergency Room, "procedure" = from linked procedure service
+    feederSource: v.optional(v.string()), // "er" | "procedure" | null
+
+    // Procedure Service Configuration (only for serviceType = "procedure")
+    // Links to the admit service that receives patients from this procedure service
+    // e.g., Cath Lab links to Tele - when Cath Lab closes, Tele census is reduced
+    linkedDownstreamServiceId: v.optional(v.id("services")),
+
     // Patient Capacity
     dayCapacity: v.optional(v.number()),
     nightCapacity: v.optional(v.number()),
@@ -170,7 +188,9 @@ export default defineSchema({
     .index("by_department", ["departmentId"])
     .index("by_hospital", ["hospitalId"])
     .index("by_health_system", ["healthSystemId"])
-    .index("by_short_code", ["shortCode"]),
+    .index("by_short_code", ["shortCode"])
+    .index("by_service_type", ["serviceType"])
+    .index("by_linked_downstream", ["linkedDownstreamServiceId"]),
 
   // ═══════════════════════════════════════════════════════════════════
   // SERVICE JOB TYPES

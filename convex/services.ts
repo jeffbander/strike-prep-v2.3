@@ -11,6 +11,14 @@ export const create = mutation({
     name: v.string(),
     shortCode: v.string(),
     unitId: v.optional(v.id("units")),
+    // Service Type Classification
+    serviceType: v.optional(v.string()), // "admit" | "procedure" | "consult" | "remote"
+    // Admit Service Configuration
+    admitCapacity: v.optional(v.number()), // New patient admissions capacity
+    feederSource: v.optional(v.string()), // "er" | "procedure"
+    // Procedure Service Configuration
+    linkedDownstreamServiceId: v.optional(v.id("services")), // Which admit service receives patients
+    // Patient Capacity
     dayCapacity: v.optional(v.number()),
     nightCapacity: v.optional(v.number()),
     weekendCapacity: v.optional(v.number()),
@@ -60,6 +68,12 @@ export const create = mutation({
       name: args.name,
       shortCode: args.shortCode.toUpperCase(),
       unitId: args.unitId,
+      // Service Type fields
+      serviceType: args.serviceType,
+      admitCapacity: args.admitCapacity,
+      feederSource: args.feederSource,
+      linkedDownstreamServiceId: args.linkedDownstreamServiceId,
+      // Patient Capacity
       dayCapacity: args.dayCapacity,
       nightCapacity: args.nightCapacity,
       weekendCapacity: args.weekendCapacity,
@@ -411,9 +425,25 @@ export const getWithDetails = query({
     // Get unit if exists
     const unit = service.unitId ? await ctx.db.get(service.unitId) : null;
 
+    // Get linked downstream service if exists (for procedure services)
+    const linkedDownstreamService = service.linkedDownstreamServiceId
+      ? await ctx.db.get(service.linkedDownstreamServiceId)
+      : null;
+
+    // Get procedure services that feed into this service (for admit services)
+    const feederProcedureServices = await ctx.db
+      .query("services")
+      .withIndex("by_linked_downstream", (q) =>
+        q.eq("linkedDownstreamServiceId", args.serviceId)
+      )
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
     return {
       ...service,
       unit,
+      linkedDownstreamService,
+      feederProcedureServices,
       serviceJobTypes: enrichedJobTypes,
       shifts,
       jobPositions,
@@ -437,6 +467,14 @@ export const update = mutation({
     name: v.string(),
     shortCode: v.string(),
     unitId: v.optional(v.id("units")),
+    // Service Type Classification
+    serviceType: v.optional(v.string()), // "admit" | "procedure" | "consult" | "remote"
+    // Admit Service Configuration
+    admitCapacity: v.optional(v.number()),
+    feederSource: v.optional(v.string()), // "er" | "procedure"
+    // Procedure Service Configuration
+    linkedDownstreamServiceId: v.optional(v.id("services")),
+    // Patient Capacity
     dayCapacity: v.optional(v.number()),
     nightCapacity: v.optional(v.number()),
     weekendCapacity: v.optional(v.number()),
@@ -521,6 +559,12 @@ export const update = mutation({
       name: args.name,
       shortCode: args.shortCode.toUpperCase(),
       unitId: args.unitId,
+      // Service Type fields
+      serviceType: args.serviceType,
+      admitCapacity: args.admitCapacity,
+      feederSource: args.feederSource,
+      linkedDownstreamServiceId: args.linkedDownstreamServiceId,
+      // Patient Capacity
       dayCapacity: args.dayCapacity,
       nightCapacity: args.nightCapacity,
       weekendCapacity: args.weekendCapacity,
@@ -762,5 +806,69 @@ export const toggleActive = mutation({
     );
 
     return { isActive: newStatus };
+  },
+});
+
+/**
+ * List services by type for linking (e.g., get admit services for procedure linking)
+ */
+export const listByType = query({
+  args: {
+    serviceType: v.string(), // "admit" | "procedure" | "consult" | "remote"
+    hospitalId: v.optional(v.id("hospitals")),
+    healthSystemId: v.optional(v.id("health_systems")),
+    excludeServiceId: v.optional(v.id("services")), // Exclude self when linking
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    let services = await ctx.db
+      .query("services")
+      .withIndex("by_service_type", (q) => q.eq("serviceType", args.serviceType))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    // Filter by hospital if provided
+    if (args.hospitalId) {
+      services = services.filter((s) => s.hospitalId === args.hospitalId);
+    }
+
+    // Filter by health system if provided
+    if (args.healthSystemId) {
+      services = services.filter((s) => s.healthSystemId === args.healthSystemId);
+    }
+
+    // Exclude self if provided
+    if (args.excludeServiceId) {
+      services = services.filter((s) => s._id !== args.excludeServiceId);
+    }
+
+    return services;
+  },
+});
+
+/**
+ * Get all procedure services that feed into an admit service
+ * Used for scenario modeling to calculate census reduction
+ */
+export const getFeederServices = query({
+  args: {
+    serviceId: v.id("services"),
+  },
+  handler: async (ctx, args) => {
+    const service = await ctx.db.get(args.serviceId);
+    if (!service) return [];
+
+    // Get all procedure services that link to this service
+    const feederServices = await ctx.db
+      .query("services")
+      .withIndex("by_linked_downstream", (q) =>
+        q.eq("linkedDownstreamServiceId", args.serviceId)
+      )
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    return feederServices;
   },
 });
