@@ -1191,7 +1191,7 @@ export const bulkImport = mutation({
       }
     }
 
-    await auditLog(ctx, user, "BULK_IMPORT", "SERVICES", args.departmentId, {
+    await auditLog(ctx, user, "BULK_IMPORT", "SERVICE", args.departmentId, {
       created,
       updated,
       errors: errors.length,
