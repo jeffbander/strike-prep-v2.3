@@ -7,18 +7,8 @@ import { requireAuth, requireHealthSystemAccess, auditLog } from "./lib/auth";
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════
 
-/**
- * Calculate reduced headcount for a strike scenario
- * Minimum 1 FTE rule: can't reduce below 1 person
- */
-function calculateScenarioHeadcount(
-  originalHeadcount: number,
-  reductionPercent: number
-): number {
-  if (reductionPercent === 0) return originalHeadcount; // Non-striking job type
-  const reduced = originalHeadcount * (1 - reductionPercent / 100);
-  return Math.max(1, Math.ceil(reduced)); // Minimum 1 FTE
-}
+// Note: We no longer calculate reduced headcount - strike scenarios are 100% reduction
+// Positions are generated at full headcount for striking job types only
 
 /**
  * Generate all dates between start and end (inclusive)
@@ -476,7 +466,8 @@ export const create = mutation({
 
 /**
  * Generate positions for a scenario
- * This is called on create and can be called to regenerate positions
+ * ONLY generates positions for STRIKING job types (these are the shifts that need to be filled)
+ * Positions are created at full headcount (100% strike assumption)
  */
 async function generatePositionsForScenario(
   ctx: any,
@@ -503,9 +494,9 @@ async function generatePositionsForScenario(
       .collect();
   }
 
-  // Create a map of affected job types for quick lookup
-  const affectedJobTypeMap = new Map(
-    affectedJobTypes.map((ajt) => [ajt.jobTypeId.toString(), ajt.reductionPercent])
+  // Create a set of striking job type IDs for quick lookup
+  const strikingJobTypeIds = new Set(
+    affectedJobTypes.map((ajt) => ajt.jobTypeId.toString())
   );
 
   const dates = getDateRange(startDate, endDate);
@@ -519,14 +510,13 @@ async function generatePositionsForScenario(
       .withIndex("by_service", (q: any) => q.eq("serviceId", service._id))
       .collect();
 
-    // Check if any of the service's job types are affected
-    const hasAffectedJobType = serviceJobTypes.some((sjt: any) =>
-      affectedJobTypeMap.has(sjt.jobTypeId.toString())
+    // Filter to only striking job types for this service
+    const strikingServiceJobTypes = serviceJobTypes.filter((sjt: any) =>
+      strikingJobTypeIds.has(sjt.jobTypeId.toString())
     );
 
-    if (!hasAffectedJobType && affectedJobTypes.length > 0) {
-      // Service has no affected job types, skip (unless we want all services)
-      // For now, we'll generate for affected job types only
+    if (strikingServiceJobTypes.length === 0) {
+      // Service has no striking job types, skip
       continue;
     }
 
@@ -536,14 +526,12 @@ async function generatePositionsForScenario(
     const department = await ctx.db.get(service.departmentId);
     const hospital = await ctx.db.get(service.hospitalId);
 
-    for (const sjt of serviceJobTypes) {
+    // Only iterate over STRIKING job types
+    for (const sjt of strikingServiceJobTypes) {
       const jobType = await ctx.db.get(sjt.jobTypeId);
       if (!jobType) continue;
 
-      // Check if this job type is affected by the strike
-      const reductionPercent = affectedJobTypeMap.get(sjt.jobTypeId.toString()) ?? 0;
-
-      // Get the original headcounts
+      // Get the headcounts (full headcount - 100% strike)
       const weekdayAmHeadcount = sjt.weekdayAmHeadcount ?? sjt.headcount ?? 1;
       const weekdayPmHeadcount = sjt.weekdayPmHeadcount ?? sjt.headcount ?? 1;
       const weekendAmHeadcount = sjt.weekendAmHeadcount ?? sjt.headcount ?? 1;
@@ -562,19 +550,14 @@ async function generatePositionsForScenario(
       for (const date of dates) {
         const weekend = isWeekend(date);
 
+        // Skip if service doesn't operate weekends and this is a weekend
+        if (weekend && !service.operatesWeekends) continue;
+
         // AM shift
         if (operatesDays) {
-          const originalHeadcount = weekend ? weekendAmHeadcount : weekdayAmHeadcount;
+          const headcount = weekend ? weekendAmHeadcount : weekdayAmHeadcount;
 
-          // Skip if service doesn't operate weekends and this is a weekend
-          if (weekend && !service.operatesWeekends) continue;
-
-          const scenarioHeadcount = calculateScenarioHeadcount(
-            originalHeadcount,
-            reductionPercent
-          );
-
-          for (let i = 1; i <= scenarioHeadcount; i++) {
+          for (let i = 1; i <= headcount; i++) {
             const jobCode = generateScenarioJobCode(
               department?.name || "DEPT",
               hospital?.shortCode || "HOSP",
@@ -598,8 +581,8 @@ async function generatePositionsForScenario(
               shiftEnd: dayEnd,
               positionNumber: i,
               jobCode,
-              originalHeadcount,
-              scenarioHeadcount,
+              originalHeadcount: headcount,
+              scenarioHeadcount: headcount, // Full headcount (100% strike)
               status: "Open",
               isActive: true,
             });
@@ -610,17 +593,9 @@ async function generatePositionsForScenario(
 
         // PM shift
         if (operatesNights) {
-          const originalHeadcount = weekend ? weekendPmHeadcount : weekdayPmHeadcount;
+          const headcount = weekend ? weekendPmHeadcount : weekdayPmHeadcount;
 
-          // Skip if service doesn't operate weekends and this is a weekend
-          if (weekend && !service.operatesWeekends) continue;
-
-          const scenarioHeadcount = calculateScenarioHeadcount(
-            originalHeadcount,
-            reductionPercent
-          );
-
-          for (let i = 1; i <= scenarioHeadcount; i++) {
+          for (let i = 1; i <= headcount; i++) {
             const jobCode = generateScenarioJobCode(
               department?.name || "DEPT",
               hospital?.shortCode || "HOSP",
@@ -644,8 +619,8 @@ async function generatePositionsForScenario(
               shiftEnd: nightEnd,
               positionNumber: i,
               jobCode,
-              originalHeadcount,
-              scenarioHeadcount,
+              originalHeadcount: headcount,
+              scenarioHeadcount: headcount, // Full headcount (100% strike)
               status: "Open",
               isActive: true,
             });

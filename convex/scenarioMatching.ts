@@ -4,12 +4,37 @@ import { Id } from "./_generated/dataModel";
 import { requireAuth, requireDepartmentAccess, auditLog } from "./lib/auth";
 
 // ═══════════════════════════════════════════════════════════════════
+// JOB TYPE HIERARCHY FOR CROSS-COVERAGE
+// Higher level providers can cover lower level positions
+// ═══════════════════════════════════════════════════════════════════
+
+const JOB_TYPE_HIERARCHY: Record<string, number> = {
+  "MD": 4,    // Doctors
+  "FEL": 4,   // Fellows = MD level
+  "RES": 4,   // Residents = MD level
+  "NP": 3,    // Nurse Practitioners
+  "PA": 3,    // Physician Assistants
+  "RN": 2,    // Registered Nurses
+};
+
+/**
+ * Check if a provider's job type can cover a position's job type
+ * Based on hierarchy: MD/FEL/RES → NP/PA → RN
+ */
+function canCoverJobType(providerCode: string, positionCode: string): boolean {
+  const providerLevel = JOB_TYPE_HIERARCHY[providerCode] ?? 1;
+  const positionLevel = JOB_TYPE_HIERARCHY[positionCode] ?? 1;
+  return providerLevel >= positionLevel;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // QUERIES
 // ═══════════════════════════════════════════════════════════════════
 
 /**
  * Find matching providers for a scenario position
- * Priority: Availability first, then skills, then hospital access, then workload balance
+ * Cross-job-type matching: Non-striking providers can cover striking positions based on hierarchy
+ * Availability is optional - affects score but doesn't filter out providers
  */
 export const findMatchesForPosition = query({
   args: { scenarioPositionId: v.id("scenario_positions") },
@@ -24,11 +49,19 @@ export const findMatchesForPosition = query({
     // Get position details
     const service = await ctx.db.get(position.serviceId);
     const serviceJobType = await ctx.db.get(position.serviceJobTypeId);
-    const jobType = await ctx.db.get(position.jobTypeId);
+    const positionJobType = await ctx.db.get(position.jobTypeId);
 
-    if (!service || !serviceJobType || !jobType) {
+    if (!service || !serviceJobType || !positionJobType) {
       return { error: "Position data incomplete", matches: [] };
     }
+
+    // Get the scenario to know which job types are striking
+    const scenario = await ctx.db.get(position.scenarioId);
+    if (!scenario) return { error: "Scenario not found", matches: [] };
+
+    const strikingJobTypeIds = new Set(
+      scenario.affectedJobTypes.map((ajt) => ajt.jobTypeId.toString())
+    );
 
     // Get required skills for this position
     const skillLinks = await ctx.db
@@ -41,49 +74,31 @@ export const findMatchesForPosition = query({
 
     const requiredSkillIds = skillLinks.map((sl) => sl.skillId);
 
-    // Get all active providers that could potentially work this position
-    // They need to match the job type OR be able to cover it
-    const providers = await ctx.db
+    // Get ALL active providers (not filtered by job type)
+    // We'll filter by hierarchy and striking status
+    const allProviders = await ctx.db
       .query("providers")
-      .withIndex("by_job_type", (q) => q.eq("jobTypeId", position.jobTypeId))
       .filter((q) => q.eq(q.field("isActive"), true))
       .collect();
 
-    // Also get providers from other job types who might cross-cover
-    // (This could be extended based on your cross-coverage rules)
-
     const matches: any[] = [];
 
-    for (const provider of providers) {
-      // 1. Check availability (MUST be available for this date/shift)
-      const availability = await ctx.db
-        .query("provider_availability")
-        .withIndex("by_provider_date", (q) =>
-          q.eq("providerId", provider._id).eq("date", position.date)
-        )
-        .first();
+    for (const provider of allProviders) {
+      // Get provider's job type
+      const providerJobType = await ctx.db.get(provider.jobTypeId);
+      if (!providerJobType) continue;
 
-      let isAvailable = true;
-      let isPreferred = false;
-
-      if (availability) {
-        if (availability.availabilityType === "unavailable") {
-          continue; // Skip unavailable providers
-        }
-        isAvailable =
-          position.shiftType === "AM"
-            ? availability.amAvailable
-            : availability.pmAvailable;
-        isPreferred =
-          position.shiftType === "AM"
-            ? availability.amPreferred ?? false
-            : availability.pmPreferred ?? false;
-
-        if (!isAvailable) continue;
+      // Skip providers whose job type is striking (they're not available to cover)
+      if (strikingJobTypeIds.has(provider.jobTypeId.toString())) {
+        continue;
       }
-      // If no availability record, assume available (or could require explicit availability)
 
-      // 2. Check hospital access
+      // Check if provider's job type can cover the position's job type (hierarchy)
+      if (!canCoverJobType(providerJobType.code, positionJobType.code)) {
+        continue;
+      }
+
+      // Check hospital access
       const canWorkAtHospital = await checkHospitalAccess(
         ctx,
         provider._id,
@@ -92,15 +107,15 @@ export const findMatchesForPosition = query({
       );
       if (!canWorkAtHospital) continue;
 
-      // 2b. Check visa restriction for fellows
+      // Check visa restriction for fellows
       // Fellows with visas can ONLY work at their home hospital
-      if (provider.hasVisa && jobType?.code === "FEL") {
+      if (provider.hasVisa && providerJobType.code === "FEL") {
         if (provider.hospitalId !== position.hospitalId) {
           continue; // Skip: Fellow with visa cannot moonlight outside home hospital
         }
       }
 
-      // 3. Check for shift conflicts (already assigned to same date/shift)
+      // Check for shift conflicts (already assigned to same date/shift)
       const existingAssignments = await ctx.db
         .query("scenario_assignments")
         .withIndex("by_provider_scenario", (q) =>
@@ -124,7 +139,42 @@ export const findMatchesForPosition = query({
       }
       if (hasConflict) continue;
 
-      // 4. Calculate skill match
+      // Check availability (OPTIONAL - affects score, not eligibility)
+      const availability = await ctx.db
+        .query("provider_availability")
+        .withIndex("by_provider_date", (q) =>
+          q.eq("providerId", provider._id).eq("date", position.date)
+        )
+        .first();
+
+      let availabilityStatus: "available" | "preferred" | "unavailable" | "unknown" = "unknown";
+      let isPreferred = false;
+
+      if (availability) {
+        if (availability.availabilityType === "unavailable") {
+          availabilityStatus = "unavailable";
+        } else {
+          const isAvailableForShift =
+            position.shiftType === "AM"
+              ? availability.amAvailable
+              : availability.pmAvailable;
+          const isPreferredForShift =
+            position.shiftType === "AM"
+              ? availability.amPreferred ?? false
+              : availability.pmPreferred ?? false;
+
+          if (isPreferredForShift) {
+            availabilityStatus = "preferred";
+            isPreferred = true;
+          } else if (isAvailableForShift) {
+            availabilityStatus = "available";
+          } else {
+            availabilityStatus = "unavailable";
+          }
+        }
+      }
+
+      // Calculate skill match
       const providerSkills = await ctx.db
         .query("provider_skills")
         .withIndex("by_provider", (q) => q.eq("providerId", provider._id))
@@ -150,18 +200,33 @@ export const findMatchesForPosition = query({
         matchQuality = "Good";
       }
 
-      // 5. Calculate workload in this scenario
+      // Calculate workload in this scenario
       const currentAssignmentCount = existingAssignments.length;
 
-      // 6. Calculate score
-      // Priority: Preferred shift > skill match > home department > fewer assignments
+      // Calculate score
+      // Priority: Availability > Preferred shift > skill match > home department > fewer assignments
       let score = 0;
+
+      // Skill matching
       score += matchedSkills.length * 10;
-      score += isPreferred ? 50 : 0;
+      score -= missingSkills.length * 15;
+
+      // Availability scoring (optional - boosts or penalizes)
+      if (availabilityStatus === "preferred") {
+        score += 50;
+      } else if (availabilityStatus === "available") {
+        score += 20;
+      } else if (availabilityStatus === "unavailable") {
+        score -= 30; // Penalize but still show
+      }
+      // "unknown" = 0 (neutral)
+
+      // Location preferences
       if (provider.departmentId === position.departmentId) score += 20;
       if (provider.hospitalId === position.hospitalId) score += 10;
+
+      // Workload balance
       score -= currentAssignmentCount * 5; // Prefer less-busy providers
-      score -= missingSkills.length * 15;
 
       // Get skill names for display
       const matchedSkillDetails = await Promise.all(
@@ -182,9 +247,10 @@ export const findMatchesForPosition = query({
         providerId: provider._id,
         providerName: `${provider.firstName} ${provider.lastName}`,
         providerEmail: provider.email,
-        jobTypeName: jobType.name,
-        jobTypeCode: jobType.code,
+        providerJobTypeName: providerJobType.name,
+        providerJobTypeCode: providerJobType.code,
         matchQuality,
+        availabilityStatus,
         isPreferred,
         matchedSkills: matchedSkillDetails.filter(Boolean),
         missingSkills: missingSkillDetails.filter(Boolean),
@@ -211,8 +277,8 @@ export const findMatchesForPosition = query({
         ...position,
         serviceName: service.name,
         serviceCode: service.shortCode,
-        jobTypeName: jobType.name,
-        jobTypeCode: jobType.code,
+        jobTypeName: positionJobType.name,
+        jobTypeCode: positionJobType.code,
       },
       requiredSkillCount: requiredSkillIds.length,
       matches,
@@ -672,52 +738,53 @@ export const getGridData = query({
 
 /**
  * Get available providers for drag-and-drop assignment
+ * Cross-job-type matching: Non-striking providers can cover striking positions based on hierarchy
+ * Availability is optional - affects sorting but doesn't filter out providers
  */
 export const getAvailableProviders = query({
   args: {
     scenarioId: v.id("strike_scenarios"),
     date: v.string(),
     shiftType: v.string(),
-    jobTypeId: v.optional(v.id("job_types")),
+    positionJobTypeId: v.optional(v.id("job_types")), // The job type of the POSITION being filled
   },
   handler: async (ctx, args) => {
-    // Get providers, optionally filtered by job type
-    let providers;
-    const jobTypeId = args.jobTypeId;
-    if (jobTypeId) {
-      providers = await ctx.db
-        .query("providers")
-        .withIndex("by_job_type", (q) => q.eq("jobTypeId", jobTypeId))
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .collect();
-    } else {
-      providers = await ctx.db
-        .query("providers")
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .collect();
+    // Get scenario to know which job types are striking
+    const scenario = await ctx.db.get(args.scenarioId);
+    if (!scenario) return [];
+
+    const strikingJobTypeIds = new Set(
+      scenario.affectedJobTypes.map((ajt) => ajt.jobTypeId.toString())
+    );
+
+    // Get position job type code if provided (for hierarchy filtering)
+    let positionJobTypeCode: string | null = null;
+    if (args.positionJobTypeId) {
+      const posJobType = await ctx.db.get(args.positionJobTypeId);
+      positionJobTypeCode = posJobType?.code ?? null;
     }
+
+    // Get ALL active providers
+    const allProviders = await ctx.db
+      .query("providers")
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
 
     const availableProviders: any[] = [];
 
-    for (const provider of providers) {
-      // Check availability
-      const availability = await ctx.db
-        .query("provider_availability")
-        .withIndex("by_provider_date", (q) =>
-          q.eq("providerId", provider._id).eq("date", args.date)
-        )
-        .first();
+    for (const provider of allProviders) {
+      // Get provider's job type
+      const providerJobType = await ctx.db.get(provider.jobTypeId);
+      if (!providerJobType) continue;
 
-      let isAvailable = true;
-      let isPreferred = false;
+      // Skip providers whose job type is striking
+      if (strikingJobTypeIds.has(provider.jobTypeId.toString())) {
+        continue;
+      }
 
-      if (availability) {
-        if (availability.availabilityType === "unavailable") continue;
-        isAvailable = args.shiftType === "AM" ? availability.amAvailable : availability.pmAvailable;
-        isPreferred = args.shiftType === "AM"
-          ? availability.amPreferred ?? false
-          : availability.pmPreferred ?? false;
-        if (!isAvailable) continue;
+      // If position job type is specified, check hierarchy
+      if (positionJobTypeCode && !canCoverJobType(providerJobType.code, positionJobTypeCode)) {
+        continue;
       }
 
       // Check for existing assignment conflicts
@@ -739,21 +806,58 @@ export const getAvailableProviders = query({
       }
       if (hasConflict) continue;
 
-      const jobType = await ctx.db.get(provider.jobTypeId);
+      // Check availability (OPTIONAL - affects sorting, not eligibility)
+      const availability = await ctx.db
+        .query("provider_availability")
+        .withIndex("by_provider_date", (q) =>
+          q.eq("providerId", provider._id).eq("date", args.date)
+        )
+        .first();
+
+      let availabilityStatus: "available" | "preferred" | "unavailable" | "unknown" = "unknown";
+      let isPreferred = false;
+
+      if (availability) {
+        if (availability.availabilityType === "unavailable") {
+          availabilityStatus = "unavailable";
+        } else {
+          const isAvailableForShift =
+            args.shiftType === "AM" ? availability.amAvailable : availability.pmAvailable;
+          const isPreferredForShift =
+            args.shiftType === "AM"
+              ? availability.amPreferred ?? false
+              : availability.pmPreferred ?? false;
+
+          if (isPreferredForShift) {
+            availabilityStatus = "preferred";
+            isPreferred = true;
+          } else if (isAvailableForShift) {
+            availabilityStatus = "available";
+          } else {
+            availabilityStatus = "unavailable";
+          }
+        }
+      }
 
       availableProviders.push({
         id: provider._id,
         name: `${provider.firstName} ${provider.lastName}`,
         initials: `${provider.firstName[0]}${provider.lastName[0]}`,
-        jobType: jobType?.code || "?",
+        jobType: providerJobType.code,
+        jobTypeName: providerJobType.name,
+        availabilityStatus,
         isPreferred,
         assignmentCount: existingAssignments.length,
       });
     }
 
-    // Sort by preferred first, then by assignment count (fewer first)
+    // Sort by: preferred first, then available, then unknown, then unavailable
+    // Within each group, sort by assignment count (fewer first)
+    const availabilityOrder = { preferred: 0, available: 1, unknown: 2, unavailable: 3 };
     availableProviders.sort((a, b) => {
-      if (a.isPreferred !== b.isPreferred) return a.isPreferred ? -1 : 1;
+      const orderA = availabilityOrder[a.availabilityStatus as keyof typeof availabilityOrder];
+      const orderB = availabilityOrder[b.availabilityStatus as keyof typeof availabilityOrder];
+      if (orderA !== orderB) return orderA - orderB;
       return a.assignmentCount - b.assignmentCount;
     });
 
