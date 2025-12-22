@@ -25,6 +25,7 @@ import type * as providers from "../providers.js";
 import type * as scenarioMatching from "../scenarioMatching.js";
 import type * as scenarios from "../scenarios.js";
 import type * as seed from "../seed.js";
+import type * as seedDemo from "../seedDemo.js";
 import type * as services from "../services.js";
 import type * as skills from "../skills.js";
 import type * as sms from "../sms.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   scenarioMatching: typeof scenarioMatching;
   scenarios: typeof scenarios;
   seed: typeof seed;
+  seedDemo: typeof seedDemo;
   services: typeof services;
   skills: typeof skills;
   sms: typeof sms;

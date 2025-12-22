@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { MapPin, Clock, DollarSign, Calendar, Briefcase, Award } from "lucide-react"
-import type { ServiceFormData } from "@/components/service-form-types"
+import type { ServiceFormData } from "@/app/services/page"
 
 interface ServiceFormReviewProps {
   formData: ServiceFormData

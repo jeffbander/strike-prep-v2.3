@@ -1,32 +1,32 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
-import { ConvexClientProvider } from "@/components/providers/convex-provider";
-import { ClerkProvider } from "@clerk/nextjs";
-import { Toaster } from "sonner";
+import type React from "react"
+import type { Metadata, Viewport } from "next"
+import { Inter } from "next/font/google"
+import { Analytics } from "@vercel/analytics/next"
+import "./globals.css"
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Strike Prep V2",
-  description: "Healthcare Staffing Management",
-};
+  title: "Strike Prep V2 - Healthcare Staffing Management",
+  description: "Enterprise healthcare staffing management platform for matching providers to open positions",
+  generator: "v0.app",
+}
+
+export const viewport: Viewport = {
+  themeColor: "#1a1f2e",
+}
 
 export default function RootLayout({
   children,
-}: {
-  children: React.ReactNode;
-}) {
+}: Readonly<{
+  children: React.ReactNode
+}>) {
   return (
-    <ClerkProvider>
-      <html lang="en">
-        <body className={inter.className}>
-          <ConvexClientProvider>
-            {children}
-            <Toaster richColors position="top-right" />
-          </ConvexClientProvider>
-        </body>
-      </html>
-    </ClerkProvider>
-  );
+    <html lang="en" className="dark">
+      <body className={`font-sans antialiased`}>
+        {children}
+        <Analytics />
+      </body>
+    </html>
+  )
 }

@@ -1,5 +1,6 @@
 import { mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { Id } from "./_generated/dataModel";
 
 const DEFAULT_SKILLS = [
   // Basic Skills
@@ -275,6 +276,349 @@ export const seedTestServiceWithProviders = mutation({
       totalPositions,
       providersCreated: providersCreated.length,
       message: `Created service with ${HEADCOUNT} workers per shift (${shiftsToCreate.length} shifts = ${totalPositions} positions), and ${providersCreated.length} matching providers`,
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// COMPREHENSIVE DEMO DATA SEED
+// ═══════════════════════════════════════════════════════════════════
+
+const DEMO_HEALTH_SYSTEM = { name: "Metro Health Partners", slug: "metro-health" };
+
+const DEMO_HOSPITALS = [
+  { name: "Metro General Hospital", shortCode: "MGH", city: "Boston", state: "MA" },
+  { name: "Riverside Medical Center", shortCode: "RMC", city: "Cambridge", state: "MA" },
+];
+
+const DEMO_DEPARTMENTS = [
+  { name: "Medicine", hospitalIndex: 0 },
+  { name: "Surgery", hospitalIndex: 0 },
+  { name: "ICU", hospitalIndex: 0 },
+  { name: "Emergency", hospitalIndex: 1 },
+  { name: "Cardiology", hospitalIndex: 1 },
+];
+
+const DEMO_JOB_TYPES = [
+  { name: "Nurse Practitioner", code: "NP" },
+  { name: "Physician Assistant", code: "PA" },
+  { name: "Registered Nurse", code: "RN" },
+];
+
+export const seedDemoData = mutation({
+  args: {},
+  handler: async (ctx) => {
+    // Get or create system user
+    let systemUser = await ctx.db
+      .query("users")
+      .withIndex("by_role", (q) => q.eq("role", "super_admin"))
+      .first();
+
+    if (!systemUser) {
+      const userId = await ctx.db.insert("users", {
+        clerkId: "system_seed_user",
+        email: "system@demo.local",
+        firstName: "System",
+        lastName: "Admin",
+        role: "super_admin",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      systemUser = await ctx.db.get(userId);
+    }
+
+    if (!systemUser) throw new Error("Could not create system user");
+
+    // Check if demo data exists
+    let healthSystem = await ctx.db
+      .query("health_systems")
+      .withIndex("by_slug", (q) => q.eq("slug", DEMO_HEALTH_SYSTEM.slug))
+      .first();
+
+    if (healthSystem) {
+      return { success: true, message: "Demo data already exists", healthSystemId: healthSystem._id };
+    }
+
+    // Create Health System
+    const hsId = await ctx.db.insert("health_systems", {
+      name: DEMO_HEALTH_SYSTEM.name,
+      slug: DEMO_HEALTH_SYSTEM.slug,
+      createdBy: systemUser._id,
+      isActive: true,
+      createdAt: Date.now(),
+    });
+    healthSystem = await ctx.db.get(hsId);
+    if (!healthSystem) throw new Error("Failed to create health system");
+
+    // Create Job Types
+    const jobTypeMap: Record<string, Id<"job_types">> = {};
+    for (const jt of DEMO_JOB_TYPES) {
+      const jtId = await ctx.db.insert("job_types", {
+        healthSystemId: healthSystem._id,
+        name: jt.name,
+        code: jt.code,
+        isDefault: jt.code === "RN",
+        isActive: true,
+      });
+      jobTypeMap[jt.code] = jtId;
+    }
+
+    // Create Hospitals
+    const hospitalIds: Id<"hospitals">[] = [];
+    for (const hosp of DEMO_HOSPITALS) {
+      const hId = await ctx.db.insert("hospitals", {
+        healthSystemId: healthSystem._id,
+        name: hosp.name,
+        shortCode: hosp.shortCode,
+        city: hosp.city,
+        state: hosp.state,
+        timezone: "America/New_York",
+        createdBy: systemUser._id,
+        isActive: true,
+        createdAt: Date.now(),
+      });
+      hospitalIds.push(hId);
+    }
+
+    // Create Departments - store with hospital reference
+    const departmentData: Array<{ id: Id<"departments">; hospitalId: Id<"hospitals"> }> = [];
+    for (const dept of DEMO_DEPARTMENTS) {
+      const hospitalId = hospitalIds[dept.hospitalIndex];
+      const dId = await ctx.db.insert("departments", {
+        hospitalId,
+        healthSystemId: healthSystem._id,
+        name: dept.name,
+        isDefault: dept.name === "Medicine",
+        isActive: true,
+      });
+      departmentData.push({ id: dId, hospitalId });
+    }
+
+    // Create Services with shifts - store service data with references
+    const serviceConfigs = [
+      { name: "ICU Coverage", shortCode: "ICUC", deptIdx: 2, headcount: 4 },
+      { name: "Medicine Floor", shortCode: "MEDF", deptIdx: 0, headcount: 3 },
+      { name: "Emergency Dept", shortCode: "ED", deptIdx: 3, headcount: 5 },
+    ];
+
+    const serviceData: Array<{ id: Id<"services">; shortCode: string; hospitalId: Id<"hospitals">; departmentId: Id<"departments"> }> = [];
+    for (const svc of serviceConfigs) {
+      const deptInfo = departmentData[svc.deptIdx];
+
+      const serviceId = await ctx.db.insert("services", {
+        departmentId: deptInfo.id,
+        hospitalId: deptInfo.hospitalId,
+        healthSystemId: healthSystem._id,
+        name: svc.name,
+        shortCode: svc.shortCode,
+        serviceType: "admit",
+        dayShiftStart: "07:00",
+        dayShiftEnd: "19:00",
+        nightShiftStart: "19:00",
+        nightShiftEnd: "07:00",
+        operatesDays: true,
+        operatesNights: true,
+        operatesWeekends: true,
+        createdBy: systemUser._id,
+        isActive: true,
+        createdAt: Date.now(),
+      });
+      serviceData.push({ id: serviceId, shortCode: svc.shortCode, hospitalId: deptInfo.hospitalId, departmentId: deptInfo.id });
+
+      // Create service_job_types for NP
+      const sjtId = await ctx.db.insert("service_job_types", {
+        serviceId,
+        jobTypeId: jobTypeMap["NP"],
+        operatesDays: true,
+        operatesNights: true,
+        headcount: svc.headcount,
+        weekdayAmHeadcount: svc.headcount,
+        weekdayPmHeadcount: Math.ceil(svc.headcount * 0.8),
+      });
+
+      // Create shifts
+      await ctx.db.insert("shifts", {
+        serviceId,
+        serviceJobTypeId: sjtId,
+        name: `${svc.name} - Day`,
+        shiftType: "Weekday_AM",
+        startTime: "07:00",
+        endTime: "19:00",
+        positionsNeeded: svc.headcount,
+        isActive: true,
+      });
+      await ctx.db.insert("shifts", {
+        serviceId,
+        serviceJobTypeId: sjtId,
+        name: `${svc.name} - Night`,
+        shiftType: "Weekday_PM",
+        startTime: "19:00",
+        endTime: "07:00",
+        positionsNeeded: Math.ceil(svc.headcount * 0.8),
+        isActive: true,
+      });
+    }
+
+    // Create 30 Providers
+    let providersCreated = 0;
+    for (let i = 0; i < 30; i++) {
+      const firstName = FIRST_NAMES[i % FIRST_NAMES.length];
+      const lastName = LAST_NAMES[Math.floor(i / FIRST_NAMES.length) % LAST_NAMES.length];
+      const deptIdx = i % departmentData.length;
+      const deptInfo = departmentData[deptIdx];
+
+      const providerId = await ctx.db.insert("providers", {
+        healthSystemId: healthSystem._id,
+        hospitalId: deptInfo.hospitalId,
+        departmentId: deptInfo.id,
+        jobTypeId: jobTypeMap["NP"],
+        firstName,
+        lastName,
+        employeeId: `EMP${String(10000 + i).padStart(6, "0")}`,
+        email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}.${i}@demo.local`,
+        cellPhone: `555-${String(1000 + i).padStart(4, "0")}`,
+        createdBy: systemUser._id,
+        isActive: true,
+        createdAt: Date.now(),
+      });
+
+      await ctx.db.insert("provider_hospital_access", {
+        providerId,
+        hospitalId: deptInfo.hospitalId,
+      });
+
+      providersCreated++;
+    }
+
+    // Create Strike Scenario
+    const today = new Date();
+    const nextMonday = new Date(today);
+    nextMonday.setDate(today.getDate() + ((1 + 7 - today.getDay()) % 7 || 7));
+    const nextFriday = new Date(nextMonday);
+    nextFriday.setDate(nextMonday.getDate() + 4);
+    const formatDate = (d: Date) => d.toISOString().split("T")[0];
+
+    const scenarioId = await ctx.db.insert("strike_scenarios", {
+      healthSystemId: healthSystem._id,
+      hospitalId: hospitalIds[0],
+      name: "Nursing Strike - Demo Week",
+      description: "Demo strike scenario for testing the matching grid",
+      startDate: formatDate(nextMonday),
+      endDate: formatDate(nextFriday),
+      affectedJobTypes: [{ jobTypeId: jobTypeMap["NP"], reductionPercent: 100 }],
+      status: "Active",
+      createdBy: systemUser._id,
+      isActive: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    // Generate scenario positions
+    let positionsCreated = 0;
+    for (const svcInfo of serviceData) {
+      const serviceJobTypes = await ctx.db
+        .query("service_job_types")
+        .withIndex("by_service", (q) => q.eq("serviceId", svcInfo.id))
+        .collect();
+
+      for (const sjt of serviceJobTypes) {
+        let currentDate = new Date(nextMonday);
+        while (currentDate <= nextFriday) {
+          const dateStr = formatDate(currentDate);
+          const headcount = sjt.weekdayAmHeadcount || sjt.headcount || 3;
+
+          // AM positions
+          for (let pos = 1; pos <= headcount; pos++) {
+            await ctx.db.insert("scenario_positions", {
+              scenarioId,
+              serviceId: svcInfo.id,
+              serviceJobTypeId: sjt._id,
+              jobTypeId: sjt.jobTypeId,
+              hospitalId: svcInfo.hospitalId,
+              departmentId: svcInfo.departmentId,
+              date: dateStr,
+              shiftType: "AM",
+              shiftStart: "07:00",
+              shiftEnd: "19:00",
+              positionNumber: pos,
+              jobCode: `${svcInfo.shortCode}_NP_${dateStr}_AM_${pos}`,
+              originalHeadcount: headcount,
+              scenarioHeadcount: headcount,
+              status: "Open",
+              isActive: true,
+            });
+            positionsCreated++;
+          }
+
+          // PM positions
+          const pmHeadcount = sjt.weekdayPmHeadcount || Math.ceil(headcount * 0.8);
+          for (let pos = 1; pos <= pmHeadcount; pos++) {
+            await ctx.db.insert("scenario_positions", {
+              scenarioId,
+              serviceId: svcInfo.id,
+              serviceJobTypeId: sjt._id,
+              jobTypeId: sjt.jobTypeId,
+              hospitalId: svcInfo.hospitalId,
+              departmentId: svcInfo.departmentId,
+              date: dateStr,
+              shiftType: "PM",
+              shiftStart: "19:00",
+              shiftEnd: "07:00",
+              positionNumber: pos,
+              jobCode: `${svcInfo.shortCode}_NP_${dateStr}_PM_${pos}`,
+              originalHeadcount: pmHeadcount,
+              scenarioHeadcount: pmHeadcount,
+              status: "Open",
+              isActive: true,
+            });
+            positionsCreated++;
+          }
+
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+      }
+    }
+
+    // Create provider availability
+    const providers = await ctx.db
+      .query("providers")
+      .withIndex("by_health_system", (q) => q.eq("healthSystemId", healthSystem._id))
+      .take(20);
+
+    let availabilityCreated = 0;
+    for (const provider of providers) {
+      let currentDate = new Date(nextMonday);
+      while (currentDate <= nextFriday) {
+        if (Math.random() < 0.7) {
+          await ctx.db.insert("provider_availability", {
+            providerId: provider._id,
+            scenarioId,
+            date: formatDate(currentDate),
+            availabilityType: "available",
+            amAvailable: Math.random() < 0.8,
+            pmAvailable: Math.random() < 0.6,
+            enteredBy: systemUser._id,
+            enteredAt: Date.now(),
+            source: "bulk_import",
+          });
+          availabilityCreated++;
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    }
+
+    return {
+      success: true,
+      message: "Demo data created successfully!",
+      healthSystemId: healthSystem._id,
+      scenarioId,
+      hospitalsCreated: hospitalIds.length,
+      departmentsCreated: departmentData.length,
+      servicesCreated: serviceData.length,
+      providersCreated,
+      positionsCreated,
+      availabilityCreated,
     };
   },
 });

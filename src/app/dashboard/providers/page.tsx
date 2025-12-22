@@ -1130,7 +1130,10 @@ export default function ProvidersPage() {
                 <th className="px-2 py-3 text-center w-10">
                   <input
                     type="checkbox"
-                    checked={filteredProviders?.filter(p => p.cellPhone).every(p => selectedProviderIds.has(p._id)) && (filteredProviders?.filter(p => p.cellPhone).length ?? 0) > 0}
+                    checked={
+                      (filteredProviders?.filter(p => p.cellPhone).length ?? 0) > 0 &&
+                      (filteredProviders?.filter(p => p.cellPhone).every(p => selectedProviderIds.has(p._id)) ?? false)
+                    }
                     onChange={(e) => {
                       if (e.target.checked) {
                         selectAllProviders();

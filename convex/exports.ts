@@ -204,6 +204,142 @@ export const getCoverageExportData = query({
 });
 
 /**
+ * Get services export data with all attributes for CSV export
+ */
+export const getServicesExportData = query({
+  args: {
+    hospitalId: v.optional(v.id("hospitals")),
+    departmentId: v.optional(v.id("departments")),
+    healthSystemId: v.optional(v.id("health_systems")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    // Get services based on scope
+    let services;
+    if (args.departmentId) {
+      const departmentId = args.departmentId;
+      services = await ctx.db
+        .query("services")
+        .withIndex("by_department", (q) => q.eq("departmentId", departmentId))
+        .collect();
+    } else if (args.hospitalId) {
+      const hospitalId = args.hospitalId;
+      services = await ctx.db
+        .query("services")
+        .withIndex("by_hospital", (q) => q.eq("hospitalId", hospitalId))
+        .collect();
+    } else if (args.healthSystemId) {
+      const healthSystemId = args.healthSystemId;
+      services = await ctx.db
+        .query("services")
+        .withIndex("by_health_system", (q) => q.eq("healthSystemId", healthSystemId))
+        .collect();
+    } else {
+      services = await ctx.db.query("services").collect();
+    }
+
+    // Enrich with related data
+    const enrichedServices = await Promise.all(
+      services.map(async (service) => {
+        const hospital = await ctx.db.get(service.hospitalId);
+        const department = await ctx.db.get(service.departmentId);
+        const unit = service.unitId ? await ctx.db.get(service.unitId) : null;
+        const linkedDownstream = service.linkedDownstreamServiceId
+          ? await ctx.db.get(service.linkedDownstreamServiceId)
+          : null;
+
+        // Get service job types with their details
+        const serviceJobTypes = await ctx.db
+          .query("service_job_types")
+          .withIndex("by_service", (q) => q.eq("serviceId", service._id))
+          .collect();
+
+        const jobTypesData = await Promise.all(
+          serviceJobTypes.map(async (sjt) => {
+            const jobType = await ctx.db.get(sjt.jobTypeId);
+            return {
+              jobTypeCode: jobType?.code || "",
+              jobTypeName: jobType?.name || "",
+              headcount: sjt.headcount || 0,
+              weekdayAmHeadcount: sjt.weekdayAmHeadcount,
+              weekdayPmHeadcount: sjt.weekdayPmHeadcount,
+              weekendAmHeadcount: sjt.weekendAmHeadcount,
+              weekendPmHeadcount: sjt.weekendPmHeadcount,
+              // Per-job-type shift config (optional overrides)
+              dayShiftStart: sjt.dayShiftStart,
+              dayShiftEnd: sjt.dayShiftEnd,
+              nightShiftStart: sjt.nightShiftStart,
+              nightShiftEnd: sjt.nightShiftEnd,
+              operatesDays: sjt.operatesDays,
+              operatesNights: sjt.operatesNights,
+            };
+          })
+        );
+
+        return {
+          // Basic Info
+          name: service.name,
+          shortCode: service.shortCode,
+          hospitalCode: hospital?.shortCode || "",
+          hospitalName: hospital?.name || "",
+          departmentName: department?.name || "",
+          unitName: unit?.name || "",
+
+          // Service Type Classification
+          serviceType: service.serviceType || "",
+          admitCapacity: service.admitCapacity || "",
+          feederSource: service.feederSource || "",
+          linkedDownstreamServiceCode: linkedDownstream?.shortCode || "",
+
+          // Patient Capacity
+          dayCapacity: service.dayCapacity || "",
+          nightCapacity: service.nightCapacity || "",
+          weekendCapacity: service.weekendCapacity || "",
+
+          // Shift Times
+          dayShiftStart: service.dayShiftStart,
+          dayShiftEnd: service.dayShiftEnd,
+          nightShiftStart: service.nightShiftStart,
+          nightShiftEnd: service.nightShiftEnd,
+
+          // Operating Modes
+          operatesDays: service.operatesDays ? "Yes" : "No",
+          operatesNights: service.operatesNights ? "Yes" : "No",
+          operatesWeekends: service.operatesWeekends ? "Yes" : "No",
+
+          // Status
+          isActive: service.isActive ? "Yes" : "No",
+
+          // Job Types (serialized for CSV - pipe-separated for multiple job types)
+          jobTypes: jobTypesData
+            .map(
+              (jt) =>
+                `${jt.jobTypeCode}:${jt.headcount}` +
+                (jt.weekdayAmHeadcount !== undefined ? `:AM=${jt.weekdayAmHeadcount}` : "") +
+                (jt.weekdayPmHeadcount !== undefined ? `:PM=${jt.weekdayPmHeadcount}` : "") +
+                (jt.weekendAmHeadcount !== undefined ? `:WE_AM=${jt.weekendAmHeadcount}` : "") +
+                (jt.weekendPmHeadcount !== undefined ? `:WE_PM=${jt.weekendPmHeadcount}` : "")
+            )
+            .join("|"),
+
+          // Raw job types array for more advanced processing
+          jobTypesArray: jobTypesData,
+        };
+      })
+    );
+
+    return {
+      total: enrichedServices.length,
+      active: enrichedServices.filter((s) => s.isActive === "Yes").length,
+      services: enrichedServices,
+      exportedAt: new Date().toISOString(),
+    };
+  },
+});
+
+/**
  * Get providers export data
  */
 export const getProvidersExportData = query({

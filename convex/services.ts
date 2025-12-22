@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { Id } from "./_generated/dataModel";
 import { requireAuth, requireDepartmentAccess, auditLog } from "./lib/auth";
 
 /**
@@ -870,5 +871,332 @@ export const getFeederServices = query({
       .collect();
 
     return feederServices;
+  },
+});
+
+/**
+ * Bulk import/update services from CSV
+ * Uses shortCode as unique identifier for upsert
+ */
+export const bulkImport = mutation({
+  args: {
+    departmentId: v.id("departments"),
+    services: v.array(
+      v.object({
+        name: v.string(),
+        shortCode: v.string(),
+        // Service Type
+        serviceType: v.optional(v.string()),
+        admitCapacity: v.optional(v.number()),
+        feederSource: v.optional(v.string()),
+        linkedDownstreamServiceCode: v.optional(v.string()),
+        // Patient Capacity
+        dayCapacity: v.optional(v.number()),
+        nightCapacity: v.optional(v.number()),
+        weekendCapacity: v.optional(v.number()),
+        // Shift Times
+        dayShiftStart: v.optional(v.string()),
+        dayShiftEnd: v.optional(v.string()),
+        nightShiftStart: v.optional(v.string()),
+        nightShiftEnd: v.optional(v.string()),
+        // Operating Modes
+        operatesDays: v.optional(v.boolean()),
+        operatesNights: v.optional(v.boolean()),
+        operatesWeekends: v.optional(v.boolean()),
+        // Unit (by name)
+        unitName: v.optional(v.string()),
+        // Job Types (array of job type configs)
+        jobTypes: v.optional(
+          v.array(
+            v.object({
+              jobTypeCode: v.string(),
+              headcount: v.number(),
+              weekdayAmHeadcount: v.optional(v.number()),
+              weekdayPmHeadcount: v.optional(v.number()),
+              weekendAmHeadcount: v.optional(v.number()),
+              weekendPmHeadcount: v.optional(v.number()),
+            })
+          )
+        ),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireDepartmentAccess(ctx, args.departmentId);
+
+    const department = await ctx.db.get(args.departmentId);
+    if (!department) throw new Error("Department not found");
+
+    const hospital = await ctx.db.get(department.hospitalId);
+    if (!hospital) throw new Error("Hospital not found");
+
+    // Get all job types for this health system for lookup
+    const jobTypes = await ctx.db
+      .query("job_types")
+      .withIndex("by_health_system", (q) => q.eq("healthSystemId", department.healthSystemId))
+      .collect();
+    const jobTypeByCode = new Map(jobTypes.map((jt) => [jt.code.toUpperCase(), jt]));
+
+    // Get all units for this hospital for lookup
+    const units = await ctx.db
+      .query("units")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", department.hospitalId))
+      .collect();
+    const unitByName = new Map(units.map((u) => [u.name.toUpperCase(), u]));
+
+    // Get all existing services in this department for lookup by shortCode
+    const existingServices = await ctx.db
+      .query("services")
+      .withIndex("by_department", (q) => q.eq("departmentId", args.departmentId))
+      .collect();
+    const serviceByCode = new Map(existingServices.map((s) => [s.shortCode.toUpperCase(), s]));
+
+    // Also get all services in this health system for linked downstream lookup
+    const allHsServices = await ctx.db
+      .query("services")
+      .withIndex("by_health_system", (q) => q.eq("healthSystemId", department.healthSystemId))
+      .collect();
+    const serviceByCodeAll = new Map(allHsServices.map((s) => [s.shortCode.toUpperCase(), s]));
+
+    let created = 0;
+    let updated = 0;
+    let errors: string[] = [];
+
+    for (const serviceData of args.services) {
+      try {
+        const shortCode = serviceData.shortCode.toUpperCase();
+        const existingService = serviceByCode.get(shortCode);
+
+        // Resolve unit if provided
+        let unitId: Id<"units"> | undefined = undefined;
+        if (serviceData.unitName) {
+          const unit = unitByName.get(serviceData.unitName.toUpperCase());
+          if (unit) {
+            unitId = unit._id;
+          }
+        }
+
+        // Resolve linked downstream service if provided
+        let linkedDownstreamServiceId: Id<"services"> | undefined = undefined;
+        if (serviceData.linkedDownstreamServiceCode) {
+          const linkedService = serviceByCodeAll.get(serviceData.linkedDownstreamServiceCode.toUpperCase());
+          if (linkedService) {
+            linkedDownstreamServiceId = linkedService._id;
+          }
+        }
+
+        if (existingService) {
+          // Update existing service
+          await ctx.db.patch(existingService._id, {
+            name: serviceData.name,
+            serviceType: serviceData.serviceType,
+            admitCapacity: serviceData.admitCapacity,
+            feederSource: serviceData.feederSource,
+            linkedDownstreamServiceId,
+            dayCapacity: serviceData.dayCapacity,
+            nightCapacity: serviceData.nightCapacity,
+            weekendCapacity: serviceData.weekendCapacity,
+            dayShiftStart: serviceData.dayShiftStart || existingService.dayShiftStart,
+            dayShiftEnd: serviceData.dayShiftEnd || existingService.dayShiftEnd,
+            nightShiftStart: serviceData.nightShiftStart || existingService.nightShiftStart,
+            nightShiftEnd: serviceData.nightShiftEnd || existingService.nightShiftEnd,
+            operatesDays: serviceData.operatesDays ?? existingService.operatesDays,
+            operatesNights: serviceData.operatesNights ?? existingService.operatesNights,
+            operatesWeekends: serviceData.operatesWeekends ?? existingService.operatesWeekends,
+            unitId,
+          });
+
+          // Update job types if provided
+          if (serviceData.jobTypes && serviceData.jobTypes.length > 0) {
+            for (const jtConfig of serviceData.jobTypes) {
+              const jobType = jobTypeByCode.get(jtConfig.jobTypeCode.toUpperCase());
+              if (!jobType) {
+                errors.push(`Job type ${jtConfig.jobTypeCode} not found for service ${shortCode}`);
+                continue;
+              }
+
+              // Find existing service_job_type
+              const existingSjt = await ctx.db
+                .query("service_job_types")
+                .withIndex("by_service", (q) => q.eq("serviceId", existingService._id))
+                .filter((q) => q.eq(q.field("jobTypeId"), jobType._id))
+                .first();
+
+              if (existingSjt) {
+                // Update headcounts
+                await ctx.db.patch(existingSjt._id, {
+                  headcount: jtConfig.headcount,
+                  weekdayAmHeadcount: jtConfig.weekdayAmHeadcount,
+                  weekdayPmHeadcount: jtConfig.weekdayPmHeadcount,
+                  weekendAmHeadcount: jtConfig.weekendAmHeadcount,
+                  weekendPmHeadcount: jtConfig.weekendPmHeadcount,
+                });
+              }
+              // Note: We don't add new job types on import - that requires the full create flow
+            }
+          }
+
+          updated++;
+        } else {
+          // Create new service (simplified - full creation requires job types)
+          if (!serviceData.jobTypes || serviceData.jobTypes.length === 0) {
+            errors.push(`Service ${shortCode} requires at least one job type for creation`);
+            continue;
+          }
+
+          // Validate all job types exist first
+          const validJobTypes: Array<{ jobType: typeof jobTypes[0]; config: typeof serviceData.jobTypes[0] }> = [];
+          for (const jtConfig of serviceData.jobTypes) {
+            const jobType = jobTypeByCode.get(jtConfig.jobTypeCode.toUpperCase());
+            if (!jobType) {
+              errors.push(`Job type ${jtConfig.jobTypeCode} not found for service ${shortCode}`);
+              continue;
+            }
+            validJobTypes.push({ jobType, config: jtConfig });
+          }
+
+          if (validJobTypes.length === 0) {
+            errors.push(`No valid job types for service ${shortCode}`);
+            continue;
+          }
+
+          // Create service
+          const serviceId = await ctx.db.insert("services", {
+            departmentId: args.departmentId,
+            hospitalId: department.hospitalId,
+            healthSystemId: department.healthSystemId,
+            name: serviceData.name,
+            shortCode,
+            unitId,
+            serviceType: serviceData.serviceType,
+            admitCapacity: serviceData.admitCapacity,
+            feederSource: serviceData.feederSource,
+            linkedDownstreamServiceId,
+            dayCapacity: serviceData.dayCapacity,
+            nightCapacity: serviceData.nightCapacity,
+            weekendCapacity: serviceData.weekendCapacity,
+            dayShiftStart: serviceData.dayShiftStart || "07:00",
+            dayShiftEnd: serviceData.dayShiftEnd || "19:00",
+            nightShiftStart: serviceData.nightShiftStart || "19:00",
+            nightShiftEnd: serviceData.nightShiftEnd || "07:00",
+            operatesDays: serviceData.operatesDays ?? true,
+            operatesNights: serviceData.operatesNights ?? true,
+            operatesWeekends: serviceData.operatesWeekends ?? true,
+            createdBy: user._id,
+            isActive: true,
+            createdAt: Date.now(),
+          });
+
+          // Create job types and shifts
+          for (const { jobType, config } of validJobTypes) {
+            const serviceJobTypeId = await ctx.db.insert("service_job_types", {
+              serviceId,
+              jobTypeId: jobType._id,
+              headcount: config.headcount,
+              weekdayAmHeadcount: config.weekdayAmHeadcount,
+              weekdayPmHeadcount: config.weekdayPmHeadcount,
+              weekendAmHeadcount: config.weekendAmHeadcount,
+              weekendPmHeadcount: config.weekendPmHeadcount,
+            });
+
+            // Create shifts based on operating modes
+            const shiftsToCreate: Array<{
+              shiftType: string;
+              name: string;
+              start: string;
+              end: string;
+              headcount: number;
+            }> = [];
+
+            const dayStart = serviceData.dayShiftStart || "07:00";
+            const dayEnd = serviceData.dayShiftEnd || "19:00";
+            const nightStart = serviceData.nightShiftStart || "19:00";
+            const nightEnd = serviceData.nightShiftEnd || "07:00";
+            const operatesDays = serviceData.operatesDays ?? true;
+            const operatesNights = serviceData.operatesNights ?? true;
+            const operatesWeekends = serviceData.operatesWeekends ?? true;
+
+            if (operatesDays) {
+              shiftsToCreate.push({
+                shiftType: "Weekday_AM",
+                name: "Weekday Day Shift",
+                start: dayStart,
+                end: dayEnd,
+                headcount: config.weekdayAmHeadcount ?? config.headcount,
+              });
+            }
+            if (operatesNights) {
+              shiftsToCreate.push({
+                shiftType: "Weekday_PM",
+                name: "Weekday Night Shift",
+                start: nightStart,
+                end: nightEnd,
+                headcount: config.weekdayPmHeadcount ?? config.headcount,
+              });
+            }
+            if (operatesWeekends && operatesDays) {
+              shiftsToCreate.push({
+                shiftType: "Weekend_AM",
+                name: "Weekend Day Shift",
+                start: dayStart,
+                end: dayEnd,
+                headcount: config.weekendAmHeadcount ?? config.headcount,
+              });
+            }
+            if (operatesWeekends && operatesNights) {
+              shiftsToCreate.push({
+                shiftType: "Weekend_PM",
+                name: "Weekend Night Shift",
+                start: nightStart,
+                end: nightEnd,
+                headcount: config.weekendPmHeadcount ?? config.headcount,
+              });
+            }
+
+            for (const shiftInfo of shiftsToCreate) {
+              const shiftId = await ctx.db.insert("shifts", {
+                serviceId,
+                serviceJobTypeId,
+                name: shiftInfo.name,
+                shiftType: shiftInfo.shiftType,
+                startTime: shiftInfo.start,
+                endTime: shiftInfo.end,
+                positionsNeeded: shiftInfo.headcount,
+                isActive: true,
+              });
+
+              // Create job positions
+              for (let i = 1; i <= shiftInfo.headcount; i++) {
+                await ctx.db.insert("job_positions", {
+                  shiftId,
+                  serviceJobTypeId,
+                  serviceId,
+                  hospitalId: department.hospitalId,
+                  departmentId: args.departmentId,
+                  jobCode: `${department.name.replace(/[^a-zA-Z]/g, "").substring(0, 8)}${hospital.shortCode}${shortCode}${jobType.code}${shiftInfo.shiftType.replace("Weekday_", "WD_").replace("Weekend_", "WE_")}_${i}`,
+                  positionNumber: i,
+                  status: "Open",
+                  isActive: true,
+                });
+              }
+            }
+          }
+
+          // Add to lookup map for linked downstream resolution
+          serviceByCodeAll.set(shortCode, { _id: serviceId, shortCode } as any);
+          created++;
+        }
+      } catch (error: any) {
+        errors.push(`Error processing ${serviceData.shortCode}: ${error.message}`);
+      }
+    }
+
+    await auditLog(ctx, user, "BULK_IMPORT", "SERVICES", args.departmentId, {
+      created,
+      updated,
+      errors: errors.length,
+    });
+
+    return { created, updated, errors };
   },
 });

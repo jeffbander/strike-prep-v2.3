@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { X, Plus } from "lucide-react"
-import type { ServiceFormData } from "@/components/service-form-types"
+import type { ServiceFormData } from "@/app/services/page"
 
 interface ServiceFormRequirementsProps {
   formData: ServiceFormData

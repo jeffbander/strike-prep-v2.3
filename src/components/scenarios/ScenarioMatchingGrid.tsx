@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -210,29 +210,27 @@ export function ScenarioMatchingGrid({ scenarioId }: ScenarioMatchingGridProps) 
               {/* AM/PM headers */}
               <tr>
                 <th className="border border-slate-700 bg-slate-800 p-2 sticky left-0 z-20"></th>
-                {visibleDates.map((date) => (
-                  <>
-                    <th
-                      key={`${date}-am`}
-                      className="border border-slate-700 bg-slate-800 p-2 text-center text-xs font-medium text-yellow-400 w-24"
-                    >
-                      AM
-                    </th>
-                    <th
-                      key={`${date}-pm`}
-                      className="border border-slate-700 bg-slate-800 p-2 text-center text-xs font-medium text-blue-400 w-24"
-                    >
-                      PM
-                    </th>
-                  </>
-                ))}
+                {visibleDates.flatMap((date) => [
+                  <th
+                    key={`${date}-am`}
+                    className="border border-slate-700 bg-slate-800 p-2 text-center text-xs font-medium text-yellow-400 w-24"
+                  >
+                    AM
+                  </th>,
+                  <th
+                    key={`${date}-pm`}
+                    className="border border-slate-700 bg-slate-800 p-2 text-center text-xs font-medium text-blue-400 w-24"
+                  >
+                    PM
+                  </th>,
+                ])}
               </tr>
             </thead>
             <tbody>
               {services.map((service: any) => (
-                <>
+                <React.Fragment key={`${service.serviceId}-${service.jobTypeId}`}>
                   {/* Service header row */}
-                  <tr key={`${service.serviceId}-${service.jobTypeId}-header`} className="bg-slate-800/50">
+                  <tr className="bg-slate-800/50">
                     <td
                       colSpan={visibleDates.length * 2 + 1}
                       className="border border-slate-700 p-3 text-sm font-bold text-emerald-400 uppercase tracking-wide"
@@ -248,45 +246,43 @@ export function ScenarioMatchingGrid({ scenarioId }: ScenarioMatchingGridProps) 
                       </td>
                       {row.shifts
                         .filter((s: any) => visibleDates.includes(s.date))
-                        .map((shift: any) => (
-                          <>
-                            <td
-                              key={`${shift.date}-am`}
-                              className="border border-slate-700 p-1 bg-slate-900 cursor-pointer"
-                              onClick={() =>
-                                shift.am &&
-                                handleCellClick(
-                                  shift.am.positionId,
-                                  shift.date,
-                                  "AM",
-                                  service.jobTypeId,
-                                  shift.am
-                                )
-                              }
-                            >
-                              {shift.am && <GridCellDisplay cell={shift.am} />}
-                            </td>
-                            <td
-                              key={`${shift.date}-pm`}
-                              className="border border-slate-700 p-1 bg-slate-900 cursor-pointer"
-                              onClick={() =>
-                                shift.pm &&
-                                handleCellClick(
-                                  shift.pm.positionId,
-                                  shift.date,
-                                  "PM",
-                                  service.jobTypeId,
-                                  shift.pm
-                                )
-                              }
-                            >
-                              {shift.pm && <GridCellDisplay cell={shift.pm} />}
-                            </td>
-                          </>
-                        ))}
+                        .flatMap((shift: any) => [
+                          <td
+                            key={`${shift.date}-am`}
+                            className="border border-slate-700 p-1 bg-slate-900 cursor-pointer"
+                            onClick={() =>
+                              shift.am &&
+                              handleCellClick(
+                                shift.am.positionId,
+                                shift.date,
+                                "AM",
+                                service.jobTypeId,
+                                shift.am
+                              )
+                            }
+                          >
+                            {shift.am && <GridCellDisplay cell={shift.am} />}
+                          </td>,
+                          <td
+                            key={`${shift.date}-pm`}
+                            className="border border-slate-700 p-1 bg-slate-900 cursor-pointer"
+                            onClick={() =>
+                              shift.pm &&
+                              handleCellClick(
+                                shift.pm.positionId,
+                                shift.date,
+                                "PM",
+                                service.jobTypeId,
+                                shift.pm
+                              )
+                            }
+                          >
+                            {shift.pm && <GridCellDisplay cell={shift.pm} />}
+                          </td>,
+                        ])}
                     </tr>
                   ))}
-                </>
+                </React.Fragment>
               ))}
             </tbody>
           </table>
@@ -458,10 +454,18 @@ export function ScenarioMatchingGrid({ scenarioId }: ScenarioMatchingGridProps) 
 }
 
 function GridCellDisplay({ cell }: { cell: GridCellData }) {
+  if (cell.status === "Cancelled") {
+    return (
+      <div className="h-12 w-full bg-slate-950 rounded flex items-center justify-center cursor-not-allowed">
+        <div className="text-xs text-slate-700 font-bold tracking-wider">---</div>
+      </div>
+    );
+  }
+
   if (cell.status === "Confirmed") {
     return (
-      <div className="h-10 w-full bg-emerald-500/10 border border-emerald-500/30 rounded flex items-center justify-center hover:bg-emerald-500/20 transition-colors">
-        <span className="text-xs font-medium text-emerald-300 truncate px-1">
+      <div className="h-12 w-full bg-emerald-500/10 border border-emerald-500/30 rounded flex items-center justify-center hover:bg-emerald-500/20 transition-colors group">
+        <span className="text-sm font-medium text-emerald-300 truncate px-2 group-hover:text-emerald-200">
           {cell.providerInitials || cell.providerName?.split(" ").map((n) => n[0]).join("")}
         </span>
       </div>
@@ -470,8 +474,8 @@ function GridCellDisplay({ cell }: { cell: GridCellData }) {
 
   if (cell.status === "Assigned") {
     return (
-      <div className="h-10 w-full bg-amber-500/10 border border-amber-500/30 rounded flex items-center justify-center hover:bg-amber-500/20 transition-colors">
-        <span className="text-xs font-medium text-amber-300 truncate px-1">
+      <div className="h-12 w-full bg-amber-500/10 border border-amber-500/30 rounded flex items-center justify-center hover:bg-amber-500/20 transition-colors group">
+        <span className="text-sm font-medium text-amber-300 truncate px-2 group-hover:text-amber-200">
           {cell.providerInitials || cell.providerName?.split(" ").map((n) => n[0]).join("")}
         </span>
       </div>
@@ -480,8 +484,8 @@ function GridCellDisplay({ cell }: { cell: GridCellData }) {
 
   // Open
   return (
-    <div className="h-10 w-full bg-slate-800/50 border-2 border-dashed border-slate-600 rounded flex items-center justify-center hover:border-emerald-500/50 hover:bg-slate-800 transition-colors">
-      <span className="text-xs text-slate-500 font-mono">[ ]</span>
+    <div className="h-12 w-full bg-slate-800/50 border-2 border-dashed border-slate-600 rounded flex items-center justify-center hover:border-emerald-500/50 hover:bg-slate-800 transition-colors group">
+      <span className="text-xs text-slate-500 font-mono group-hover:text-emerald-400 transition-colors">[ ]</span>
     </div>
   );
 }
