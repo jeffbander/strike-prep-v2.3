@@ -554,4 +554,22 @@ export default defineSchema({
     .index("by_to_phone", ["toPhone"]) // For finding conversations
     .index("by_from_phone", ["fromPhone"]) // For matching inbound to provider
     .index("by_direction", ["direction"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CLAIM TOKENS
+  // Self-service shift claiming via email link (no auth required)
+  // ═══════════════════════════════════════════════════════════════════
+
+  claim_tokens: defineTable({
+    scenarioId: v.id("strike_scenarios"),
+    providerId: v.id("providers"),
+    token: v.string(), // UUID for secure access
+    expiresAt: v.number(), // Timestamp - expires after scenario end date
+    createdAt: v.number(),
+    createdBy: v.id("users"),
+  })
+    .index("by_token", ["token"])
+    .index("by_scenario", ["scenarioId"])
+    .index("by_provider", ["providerId"])
+    .index("by_scenario_provider", ["scenarioId", "providerId"]),
 });

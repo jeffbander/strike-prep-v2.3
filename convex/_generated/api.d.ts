@@ -9,7 +9,10 @@
  */
 
 import type * as auditLogs from "../auditLogs.js";
+import type * as claimTokens from "../claimTokens.js";
 import type * as departments from "../departments.js";
+import type * as email from "../email.js";
+import type * as emailInternal from "../emailInternal.js";
 import type * as exports from "../exports.js";
 import type * as healthSystems from "../healthSystems.js";
 import type * as hospitals from "../hospitals.js";
@@ -40,7 +43,10 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auditLogs: typeof auditLogs;
+  claimTokens: typeof claimTokens;
   departments: typeof departments;
+  email: typeof email;
+  emailInternal: typeof emailInternal;
   exports: typeof exports;
   healthSystems: typeof healthSystems;
   hospitals: typeof hospitals;

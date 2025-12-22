@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Link from "next/link";
 import { Id } from "../../../../../convex/_generated/dataModel";
+import SendAvailabilityDialog from "@/components/scenarios/SendAvailabilityDialog";
 
 export default function ScenarioDetailPage() {
   const params = useParams();
@@ -22,6 +23,7 @@ export default function ScenarioDetailPage() {
   const cancelScenario = useMutation(api.scenarios.cancel);
 
   const [viewMode, setViewMode] = useState<"dashboard" | "grid">("dashboard");
+  const [showSendAvailability, setShowSendAvailability] = useState(false);
 
   const handleActivate = async () => {
     try {
@@ -131,6 +133,15 @@ export default function ScenarioDetailPage() {
             )}
             {scenario.status === "Active" && (
               <>
+                <button
+                  onClick={() => setShowSendAvailability(true)}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                  Send Availability Request
+                </button>
                 <Link
                   href={`/dashboard/scenarios/${scenarioId}/match`}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
@@ -399,6 +410,13 @@ export default function ScenarioDetailPage() {
             </table>
           </div>
         )}
+
+        {/* Send Availability Dialog */}
+        <SendAvailabilityDialog
+          scenarioId={scenarioId}
+          isOpen={showSendAvailability}
+          onClose={() => setShowSendAvailability(false)}
+        />
       </div>
     </div>
   );
