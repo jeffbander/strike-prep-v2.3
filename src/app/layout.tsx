@@ -1,19 +1,31 @@
 import type React from "react"
 import type { Metadata, Viewport } from "next"
-import { Inter } from "next/font/google"
+import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
+import { ClerkProvider } from "@clerk/nextjs"
+import { ConvexClientProvider } from "@/components/providers/convex-provider"
+import { Toaster } from "sonner"
 import "./globals.css"
 
-const inter = Inter({ subsets: ["latin"] })
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+})
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  display: "swap",
+})
 
 export const metadata: Metadata = {
-  title: "Strike Prep V2 - Healthcare Staffing Management",
-  description: "Enterprise healthcare staffing management platform for matching providers to open positions",
-  generator: "v0.app",
+  title: "Strike Prep | Command Center",
+  description: "Healthcare staffing command center for strike scenario management and provider coordination",
 }
 
 export const viewport: Viewport = {
-  themeColor: "#1a1f2e",
+  themeColor: "#0a0f1a",
 }
 
 export default function RootLayout({
@@ -22,11 +34,16 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`font-sans antialiased`}>
-        {children}
-        <Analytics />
-      </body>
-    </html>
+    <ClerkProvider>
+      <html lang="en" className="dark">
+        <body className={`${plusJakarta.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
+          <ConvexClientProvider>
+            {children}
+            <Toaster richColors position="top-right" />
+          </ConvexClientProvider>
+          <Analytics />
+        </body>
+      </html>
+    </ClerkProvider>
   )
 }

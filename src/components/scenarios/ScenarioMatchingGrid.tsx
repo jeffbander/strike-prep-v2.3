@@ -54,7 +54,7 @@ export function ScenarioMatchingGrid({ scenarioId }: ScenarioMatchingGridProps) 
           scenarioId,
           date: selectedCell.date,
           shiftType: selectedCell.shiftType,
-          jobTypeId: selectedCell.jobTypeId,
+          positionJobTypeId: selectedCell.jobTypeId,
         }
       : "skip"
   );
