@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { emailSchema, optionalSafeTextSchema, validateField } from "./lib/validation";
 
 // The super admin email - hardcoded for bootstrap
 const SUPER_ADMIN_EMAIL = "notifications@providerloop.com";

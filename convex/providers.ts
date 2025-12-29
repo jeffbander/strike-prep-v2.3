@@ -1,6 +1,14 @@
 import { mutation, query, MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import {
+  safeTextSchema,
+  optionalSafeTextSchema,
+  optionalPhoneSchema,
+  optionalEmailSchema,
+  optionalLongTextSchema,
+  validateField,
+} from "./lib/validation";
 
 /**
  * Create a single provider
@@ -36,22 +44,34 @@ export const create = mutation({
     const department = await ctx.db.get(args.departmentId);
     if (!department) throw new Error("Department not found");
 
-    // Create provider
+    // Validate and sanitize input (XSS prevention)
+    const firstName = validateField(safeTextSchema, args.firstName, "firstName");
+    const lastName = validateField(safeTextSchema, args.lastName, "lastName");
+    const employeeId = args.employeeId ? validateField(optionalSafeTextSchema, args.employeeId, "employeeId") : undefined;
+    const cellPhone = args.cellPhone ? validateField(optionalPhoneSchema, args.cellPhone, "cellPhone") : undefined;
+    const email = args.email ? validateField(optionalEmailSchema, args.email, "email") : undefined;
+    const currentScheduleDays = args.currentScheduleDays ? validateField(optionalSafeTextSchema, args.currentScheduleDays, "currentScheduleDays") : undefined;
+    const currentScheduleTime = args.currentScheduleTime ? validateField(optionalSafeTextSchema, args.currentScheduleTime, "currentScheduleTime") : undefined;
+    const supervisingPhysician = args.supervisingPhysician ? validateField(optionalSafeTextSchema, args.supervisingPhysician, "supervisingPhysician") : undefined;
+    const specialtyCertification = args.specialtyCertification ? validateField(optionalSafeTextSchema, args.specialtyCertification, "specialtyCertification") : undefined;
+    const previousExperience = args.previousExperience ? validateField(optionalLongTextSchema, args.previousExperience, "previousExperience") : undefined;
+
+    // Create provider with sanitized data
     const providerId = await ctx.db.insert("providers", {
       healthSystemId: department.healthSystemId,
       hospitalId: department.hospitalId,
       departmentId: args.departmentId,
       jobTypeId: args.jobTypeId,
-      firstName: args.firstName,
-      lastName: args.lastName,
-      employeeId: args.employeeId,
-      cellPhone: args.cellPhone,
-      email: args.email,
-      currentScheduleDays: args.currentScheduleDays,
-      currentScheduleTime: args.currentScheduleTime,
-      supervisingPhysician: args.supervisingPhysician,
-      specialtyCertification: args.specialtyCertification,
-      previousExperience: args.previousExperience,
+      firstName,
+      lastName,
+      employeeId,
+      cellPhone,
+      email,
+      currentScheduleDays,
+      currentScheduleTime,
+      supervisingPhysician,
+      specialtyCertification,
+      previousExperience,
       hasVisa: args.hasVisa,
       createdBy: currentUser._id,
       isActive: true,
