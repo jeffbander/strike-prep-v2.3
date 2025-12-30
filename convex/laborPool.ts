@@ -45,15 +45,34 @@ export const getLaborPoolExportData = query({
       headcounts: Record<string, number>;
       capacities: { day: number | null; night: number | null; weekend: number | null };
       skills: string[];
+      // Service configuration (included on first row for each service)
+      serviceType: string | null;
+      admitCapacity: number | null;
+      feederSource: string | null;
+      linkedDownstreamService: string | null;
+      dayShiftStart: string | null;
+      dayShiftEnd: string | null;
+      nightShiftStart: string | null;
+      nightShiftEnd: string | null;
+      unitName: string | null;
     }> = [];
 
     for (const service of services) {
+      // Get unit info if assigned
+      const unit = service.unitId ? await ctx.db.get(service.unitId) : null;
+
+      // Get linked downstream service info
+      const linkedService = service.linkedDownstreamServiceId
+        ? await ctx.db.get(service.linkedDownstreamServiceId)
+        : null;
+
       // Get all service_job_types for this service
       const serviceJobTypes = await ctx.db
         .query("service_job_types")
         .withIndex("by_service", (q) => q.eq("serviceId", service._id))
         .collect();
 
+      let isFirstRow = true;
       for (const sjt of serviceJobTypes) {
         const jobType = await ctx.db.get(sjt.jobTypeId);
         if (!jobType) continue;
@@ -93,7 +112,18 @@ export const getLaborPoolExportData = query({
             weekend: service.weekendCapacity ?? null,
           },
           skills,
+          // Include service config on first row only (to avoid repetition in Excel)
+          serviceType: isFirstRow ? (service.serviceType ?? null) : null,
+          admitCapacity: isFirstRow ? (service.admitCapacity ?? null) : null,
+          feederSource: isFirstRow ? (service.feederSource ?? null) : null,
+          linkedDownstreamService: isFirstRow ? (linkedService?.shortCode ?? null) : null,
+          dayShiftStart: isFirstRow ? (service.dayShiftStart ?? null) : null,
+          dayShiftEnd: isFirstRow ? (service.dayShiftEnd ?? null) : null,
+          nightShiftStart: isFirstRow ? (service.nightShiftStart ?? null) : null,
+          nightShiftEnd: isFirstRow ? (service.nightShiftEnd ?? null) : null,
+          unitName: isFirstRow ? (unit?.name ?? null) : null,
         });
+        isFirstRow = false;
       }
     }
 
@@ -158,6 +188,15 @@ export const bulkImportLaborPool = mutation({
           weekend: v.optional(v.number()),
         }),
         skills: v.array(v.string()),
+        // Service configuration fields (optional)
+        serviceType: v.optional(v.string()),
+        admitCapacity: v.optional(v.number()),
+        feederSource: v.optional(v.string()),
+        linkedDownstreamService: v.optional(v.string()),
+        dayShiftStart: v.optional(v.string()),
+        dayShiftEnd: v.optional(v.string()),
+        nightShiftStart: v.optional(v.string()),
+        nightShiftEnd: v.optional(v.string()),
       })
     ),
   },
@@ -221,6 +260,27 @@ export const bulkImportLaborPool = mutation({
       const nightCapacity = firstRow.capacities.night;
       const weekendCapacity = firstRow.capacities.weekend;
 
+      // Get service config from first row (these are only on first row per service)
+      const serviceType = firstRow.serviceType;
+      const admitCapacity = firstRow.admitCapacity;
+      const feederSource = firstRow.feederSource;
+      const linkedDownstreamServiceCode = firstRow.linkedDownstreamService;
+      const dayShiftStart = firstRow.dayShiftStart || "07:00";
+      const dayShiftEnd = firstRow.dayShiftEnd || "19:00";
+      const nightShiftStart = firstRow.nightShiftStart || "19:00";
+      const nightShiftEnd = firstRow.nightShiftEnd || "07:00";
+
+      // Find linked downstream service if specified
+      let linkedDownstreamServiceId: Id<"services"> | undefined;
+      if (linkedDownstreamServiceCode) {
+        const linkedService = existingServices.find(
+          (s) => s.shortCode.toUpperCase() === linkedDownstreamServiceCode.toUpperCase()
+        );
+        if (linkedService) {
+          linkedDownstreamServiceId = linkedService._id;
+        }
+      }
+
       // Determine operating modes from headcounts
       const hasWeekdayAM = serviceRows.some((r) => (r.headcounts.Weekday_AM ?? 0) > 0);
       const hasWeekdayPM = serviceRows.some((r) => (r.headcounts.Weekday_PM ?? 0) > 0);
@@ -248,10 +308,15 @@ export const bulkImportLaborPool = mutation({
           dayCapacity,
           nightCapacity,
           weekendCapacity,
-          dayShiftStart: "07:00",
-          dayShiftEnd: "19:00",
-          nightShiftStart: "19:00",
-          nightShiftEnd: "07:00",
+          // Service configuration
+          serviceType: serviceType as "admit" | "procedure" | "consult" | "remote" | undefined,
+          admitCapacity,
+          feederSource: feederSource as "er" | "procedure" | undefined,
+          linkedDownstreamServiceId,
+          dayShiftStart,
+          dayShiftEnd,
+          nightShiftStart,
+          nightShiftEnd,
           operatesDays: hasWeekdayAM,
           operatesNights: hasWeekdayPM,
           operatesWeekends: hasWeekendAM || hasWeekendPM,
@@ -267,11 +332,20 @@ export const bulkImportLaborPool = mutation({
         }
         results.servicesCreated++;
       } else {
-        // Update existing service capacities and operating modes
+        // Update existing service capacities, operating modes, and config
         await ctx.db.patch(service._id, {
           dayCapacity,
           nightCapacity,
           weekendCapacity,
+          // Only update config fields if provided
+          ...(serviceType && { serviceType: serviceType as "admit" | "procedure" | "consult" | "remote" }),
+          ...(admitCapacity !== undefined && { admitCapacity }),
+          ...(feederSource && { feederSource: feederSource as "er" | "procedure" }),
+          ...(linkedDownstreamServiceId && { linkedDownstreamServiceId }),
+          ...(firstRow.dayShiftStart && { dayShiftStart: firstRow.dayShiftStart }),
+          ...(firstRow.dayShiftEnd && { dayShiftEnd: firstRow.dayShiftEnd }),
+          ...(firstRow.nightShiftStart && { nightShiftStart: firstRow.nightShiftStart }),
+          ...(firstRow.nightShiftEnd && { nightShiftEnd: firstRow.nightShiftEnd }),
           operatesDays: hasWeekdayAM,
           operatesNights: hasWeekdayPM,
           operatesWeekends: hasWeekendAM || hasWeekendPM,

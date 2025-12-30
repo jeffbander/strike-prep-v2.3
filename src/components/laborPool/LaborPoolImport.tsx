@@ -29,6 +29,15 @@ interface ParsedRow {
     weekend?: number;
   };
   skills: string[];
+  // Service configuration fields
+  serviceType?: string;
+  admitCapacity?: number;
+  feederSource?: string;
+  linkedDownstreamService?: string;
+  dayShiftStart?: string;
+  dayShiftEnd?: string;
+  nightShiftStart?: string;
+  nightShiftEnd?: string;
   errors: string[];
   isNew: boolean;
 }
@@ -113,6 +122,16 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
           // Find skills column
           const skillsColIdx = headers.findIndex((h) => h.toLowerCase().includes("skill"));
 
+          // Find service configuration columns
+          const serviceTypeColIdx = headers.findIndex((h) => h.toLowerCase().includes("service") && h.toLowerCase().includes("type"));
+          const admitCapColIdx = headers.findIndex((h) => h.toLowerCase().includes("admit") && h.toLowerCase().includes("cap"));
+          const feederSourceColIdx = headers.findIndex((h) => h.toLowerCase().includes("feeder"));
+          const linkedDownstreamColIdx = headers.findIndex((h) => h.toLowerCase().includes("linked") || h.toLowerCase().includes("downstream"));
+          const dayShiftStartColIdx = headers.findIndex((h) => h.toLowerCase().includes("day") && h.toLowerCase().includes("shift") && h.toLowerCase().includes("start"));
+          const dayShiftEndColIdx = headers.findIndex((h) => h.toLowerCase().includes("day") && h.toLowerCase().includes("shift") && h.toLowerCase().includes("end"));
+          const nightShiftStartColIdx = headers.findIndex((h) => h.toLowerCase().includes("night") && h.toLowerCase().includes("shift") && h.toLowerCase().includes("start"));
+          const nightShiftEndColIdx = headers.findIndex((h) => h.toLowerCase().includes("night") && h.toLowerCase().includes("shift") && h.toLowerCase().includes("end"));
+
           // Parse data rows
           const rows: ParsedRow[] = [];
           for (let i = 1; i < jsonData.length; i++) {
@@ -175,6 +194,16 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
               }
             }
 
+            // Parse service configuration fields
+            const serviceType = serviceTypeColIdx >= 0 ? String(row[serviceTypeColIdx] || "").trim() : undefined;
+            const admitCapacity = admitCapColIdx >= 0 && row[admitCapColIdx] ? parseInt(String(row[admitCapColIdx]), 10) : undefined;
+            const feederSource = feederSourceColIdx >= 0 ? String(row[feederSourceColIdx] || "").trim() : undefined;
+            const linkedDownstreamService = linkedDownstreamColIdx >= 0 ? String(row[linkedDownstreamColIdx] || "").trim() : undefined;
+            const dayShiftStart = dayShiftStartColIdx >= 0 ? String(row[dayShiftStartColIdx] || "").trim() : undefined;
+            const dayShiftEnd = dayShiftEndColIdx >= 0 ? String(row[dayShiftEndColIdx] || "").trim() : undefined;
+            const nightShiftStart = nightShiftStartColIdx >= 0 ? String(row[nightShiftStartColIdx] || "").trim() : undefined;
+            const nightShiftEnd = nightShiftEndColIdx >= 0 ? String(row[nightShiftEndColIdx] || "").trim() : undefined;
+
             const isNew = !existingServiceNames.has(serviceName.toUpperCase());
 
             rows.push({
@@ -184,6 +213,15 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
               headcounts,
               capacities,
               skills,
+              // Service config
+              serviceType: serviceType || undefined,
+              admitCapacity: isNaN(admitCapacity as number) ? undefined : admitCapacity,
+              feederSource: feederSource || undefined,
+              linkedDownstreamService: linkedDownstreamService || undefined,
+              dayShiftStart: dayShiftStart || undefined,
+              dayShiftEnd: dayShiftEnd || undefined,
+              nightShiftStart: nightShiftStart || undefined,
+              nightShiftEnd: nightShiftEnd || undefined,
               errors,
               isNew,
             });
@@ -309,7 +347,7 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
     XLSX.utils.book_append_sheet(wb, templateSheet, "Template");
 
     // Download
-    XLSX.writeFile(wb, "staffing_requirements_template.xlsx");
+    XLSX.writeFile(wb, "services_import_template.xlsx");
   };
 
   const handleImport = async () => {
@@ -330,6 +368,15 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
           headcounts: r.headcounts,
           capacities: r.capacities,
           skills: r.skills,
+          // Service configuration
+          serviceType: r.serviceType,
+          admitCapacity: r.admitCapacity,
+          feederSource: r.feederSource,
+          linkedDownstreamService: r.linkedDownstreamService,
+          dayShiftStart: r.dayShiftStart,
+          dayShiftEnd: r.dayShiftEnd,
+          nightShiftStart: r.nightShiftStart,
+          nightShiftEnd: r.nightShiftEnd,
         })),
       });
 
@@ -366,7 +413,7 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
       <div className="bg-slate-800 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-slate-700 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Import Current Staffing</h2>
+          <h2 className="text-xl font-semibold">Import Services</h2>
           <button
             onClick={handleClose}
             className="text-slate-400 hover:text-white"
@@ -387,7 +434,7 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
                   <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  How to Import Staffing Requirements
+                  How to Import Services
                 </h3>
                 <ol className="text-sm text-slate-300 space-y-2 ml-7 list-decimal">
                   <li><strong>Download the template</strong> - Click the button below to get a pre-formatted Excel file with instructions</li>
@@ -398,7 +445,7 @@ export default function LaborPoolImport({ departmentId, isOpen, onClose }: Labor
 
                 <div className="mt-4 pt-4 border-t border-slate-600">
                   <p className="text-xs text-slate-400 mb-2">
-                    <strong>What gets imported:</strong> Services with their staffing requirements (roles, shift counts, capacities, and required skills).
+                    <strong>What gets imported:</strong> Services with their configuration, staffing requirements (roles, shift counts, capacities), and required skills.
                     Each row in the file represents one role within a service. Existing services will be updated, new ones will be created.
                   </p>
                   <p className="text-xs text-amber-400/80 mb-3">
