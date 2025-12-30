@@ -398,11 +398,16 @@ test.describe("Hospital Admin - Department Activation Flow", () => {
         await lastNameInput.fill("DeptAdmin");
       }
       if (await roleSelector.isVisible()) {
-        await roleSelector.selectOption({ label: /departmental/i });
+        // Find option containing "departmental" (case-insensitive)
+        const options = await roleSelector.locator('option').allTextContents();
+        const deptOption = options.find(opt => /departmental/i.test(opt));
+        if (deptOption) await roleSelector.selectOption({ label: deptOption });
       }
       if (await departmentSelector.isVisible()) {
         // Select Medicine department
-        await departmentSelector.selectOption({ label: /medicine/i });
+        const options = await departmentSelector.locator('option').allTextContents();
+        const medicineOption = options.find(opt => /medicine/i.test(opt));
+        if (medicineOption) await departmentSelector.selectOption({ label: medicineOption });
       }
 
       // Submit

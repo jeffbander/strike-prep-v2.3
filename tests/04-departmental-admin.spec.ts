@@ -140,7 +140,9 @@ test.describe("Departmental Admin Journey", () => {
 
       if (await jobTypeSelect.isVisible()) {
         // Try selecting NP and PA
-        await jobTypeSelect.selectOption({ label: /nurse practitioner|NP/i });
+        const options = await jobTypeSelect.locator('option').allTextContents();
+        const npOption = options.find(opt => /nurse practitioner|NP/i.test(opt));
+        if (npOption) await jobTypeSelect.selectOption({ label: npOption });
       } else if (await jobTypeCheckboxes.first().isVisible()) {
         // Check NP and PA checkboxes
         const npCheckbox = page.locator("input[type='checkbox']:near(:text('NP'))");
@@ -255,7 +257,9 @@ test.describe("Departmental Admin Journey", () => {
 
       if (await skillsSelect.isVisible()) {
         // Multi-select skills
-        await skillsSelect.selectOption({ label: /critical care|CC/i });
+        const options = await skillsSelect.locator('option').allTextContents();
+        const ccOption = options.find(opt => /critical care|CC/i.test(opt));
+        if (ccOption) await skillsSelect.selectOption({ label: ccOption });
       } else if (await skillCheckboxes.first().isVisible()) {
         // Check skill checkboxes
         await skillCheckboxes.first().check();
