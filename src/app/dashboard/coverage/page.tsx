@@ -12,6 +12,10 @@ export default function CoverageDashboardPage() {
   const hospitals = useQuery(api.hospitals.list, {});
   const departments = useQuery(api.departments.list, {});
 
+  // Get active strike scenarios
+  const scenarios = useQuery(api.scenarios.list, { status: "Active" });
+  const activeScenario = scenarios && scenarios.length > 0 ? scenarios[0] : null;
+
   const [selectedHospitalId, setSelectedHospitalId] = useState<string>("");
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>("");
 
@@ -73,6 +77,73 @@ export default function CoverageDashboardPage() {
             </p>
           </div>
         </div>
+
+        {/* Active Strike Scenario Banner */}
+        {activeScenario && (
+          <Link
+            href={`/dashboard/scenarios/${activeScenario._id}/match`}
+            className="block mb-8"
+          >
+            <div className="bg-gradient-to-r from-red-900/50 to-amber-900/50 border border-red-500/50 rounded-lg p-6 hover:border-red-400 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center">
+                    <span className="text-2xl">&#9888;</span>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded">
+                        ACTIVE STRIKE
+                      </span>
+                      <h2 className="text-xl font-bold text-white">
+                        {activeScenario.name}
+                      </h2>
+                    </div>
+                    <p className="text-slate-300 text-sm mt-1">
+                      {activeScenario.startDate} to {activeScenario.endDate}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-8">
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-white">
+                      {activeScenario.stats.coveragePercent}%
+                    </p>
+                    <p className="text-sm text-slate-400">Coverage</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-emerald-400">
+                      {activeScenario.stats.filledPositions}
+                    </p>
+                    <p className="text-sm text-slate-400">Filled</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-amber-400">
+                      {activeScenario.stats.openPositions}
+                    </p>
+                    <p className="text-sm text-slate-400">Open</p>
+                  </div>
+                  <div className="bg-emerald-500 hover:bg-emerald-400 px-4 py-2 rounded-lg font-medium transition-colors">
+                    Match Providers &rarr;
+                  </div>
+                </div>
+              </div>
+              {/* Coverage Progress Bar */}
+              <div className="mt-4 h-2 bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full transition-all ${
+                    activeScenario.stats.coveragePercent >= 80
+                      ? "bg-emerald-500"
+                      : activeScenario.stats.coveragePercent >= 60
+                      ? "bg-amber-500"
+                      : "bg-red-500"
+                  }`}
+                  style={{ width: `${activeScenario.stats.coveragePercent}%` }}
+                />
+              </div>
+            </div>
+          </Link>
+        )}
 
         {/* Filters */}
         <div className="flex gap-4 mb-8">
@@ -388,12 +459,18 @@ export default function CoverageDashboardPage() {
         {/* Quick Actions */}
         <div className="mt-8 grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Link
-            href="/dashboard/matching"
-            className="bg-slate-800 hover:bg-slate-700 rounded-lg p-4 text-center transition-colors"
+            href={activeScenario ? `/dashboard/scenarios/${activeScenario._id}/match` : "/dashboard/matching"}
+            className={`rounded-lg p-4 text-center transition-colors ${
+              activeScenario
+                ? "bg-gradient-to-br from-red-900/50 to-amber-900/50 border border-red-500/30 hover:border-red-400"
+                : "bg-slate-800 hover:bg-slate-700"
+            }`}
           >
             <p className="text-emerald-400 text-2xl mb-1">+</p>
             <p className="font-medium">Match Providers</p>
-            <p className="text-sm text-slate-400">Fill open positions</p>
+            <p className="text-sm text-slate-400">
+              {activeScenario ? "Fill strike positions" : "Fill open positions"}
+            </p>
           </Link>
           <Link
             href="/dashboard/providers"

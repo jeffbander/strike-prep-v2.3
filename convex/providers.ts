@@ -333,6 +333,7 @@ export const list = query({
   args: {
     departmentId: v.optional(v.id("departments")),
     hospitalId: v.optional(v.id("hospitals")),
+    healthSystemId: v.optional(v.id("health_systems")),
     includeInactive: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
@@ -375,6 +376,29 @@ export const list = query({
       if (!showInactive) {
         providers = providers.filter((p) => p.isActive);
       }
+    } else if (args.healthSystemId) {
+      // Filter by health system (for super_admin or health_system_admin)
+      const healthSystemId = args.healthSystemId;
+      providers = await ctx.db
+        .query("providers")
+        .withIndex("by_health_system", (q) => q.eq("healthSystemId", healthSystemId))
+        .collect();
+      if (!showInactive) {
+        providers = providers.filter((p) => p.isActive);
+      }
+    } else if (currentUser.role === "super_admin" || currentUser.role === "health_system_admin") {
+      // For super_admin/health_system_admin without filter, use their health system or return empty
+      const healthSystemId = currentUser.healthSystemId;
+      if (healthSystemId) {
+        providers = await ctx.db
+          .query("providers")
+          .withIndex("by_health_system", (q) => q.eq("healthSystemId", healthSystemId))
+          .collect();
+        if (!showInactive) {
+          providers = providers.filter((p) => p.isActive);
+        }
+      }
+      // If super_admin has no healthSystemId, they need to pass one explicitly
     } else if (currentUser.role === "departmental_admin" && currentUser.departmentId) {
       const departmentId = currentUser.departmentId;
       if (showInactive) {

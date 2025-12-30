@@ -69,10 +69,10 @@ export const sendSMS = action({
       throw new Error("User not found or not authenticated");
     }
 
-    // Determine health system ID
-    const healthSystemId = user.healthSystemId;
+    // Determine health system ID - use user's or fall back to provider's (for super_admin)
+    const healthSystemId = user.healthSystemId || provider.healthSystemId;
     if (!healthSystemId) {
-      throw new Error("User must be associated with a health system to send SMS");
+      throw new Error("Unable to determine health system for SMS logging");
     }
 
     // Build the message based on type
@@ -245,10 +245,13 @@ export const sendBulkSMS = action({
 
         // Get user
         const user = await ctx.runQuery(internal.sms.getCurrentUserForSMS, {});
-        if (!user || !user.healthSystemId) {
+        if (!user) {
           results.push({ providerId, success: false, error: "User not found" });
           continue;
         }
+
+        // Use user's health system or fall back to provider's (for super_admin)
+        const healthSystemId = user.healthSystemId || provider.healthSystemId;
 
         // Build message
         let message: string = args.customMessage || "";
@@ -274,7 +277,7 @@ export const sendBulkSMS = action({
         if (!accountSid || !authToken || !fromPhone) {
           await ctx.runMutation(internal.sms.logSMS, {
             sentBy: user._id,
-            healthSystemId: user.healthSystemId,
+            healthSystemId,
             providerId,
             toPhone,
             providerName: `${provider.firstName} ${provider.lastName}`,
@@ -310,7 +313,7 @@ export const sendBulkSMS = action({
         if (!response.ok) {
           await ctx.runMutation(internal.sms.logSMS, {
             sentBy: user._id,
-            healthSystemId: user.healthSystemId,
+            healthSystemId,
             providerId,
             toPhone,
             providerName: `${provider.firstName} ${provider.lastName}`,
@@ -324,7 +327,7 @@ export const sendBulkSMS = action({
         } else {
           await ctx.runMutation(internal.sms.logSMS, {
             sentBy: user._id,
-            healthSystemId: user.healthSystemId,
+            healthSystemId,
             providerId,
             toPhone,
             providerName: `${provider.firstName} ${provider.lastName}`,

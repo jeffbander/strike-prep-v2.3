@@ -15,9 +15,7 @@ export default function ProvidersPage() {
   const healthSystems = useQuery(api.healthSystems.list, {});
   const hospitals = useQuery(api.hospitals.list, {});
   const departments = useQuery(api.departments.list, {});
-  const jobTypes = useQuery(api.jobTypes.list, {});
   const skills = useQuery(api.skills.list, {});
-  const providers = useQuery(api.providers.list, {});
   const createProvider = useMutation(api.providers.create);
   const bulkCreateProviders = useMutation(api.providers.bulkCreateWithIds);
   const bulkCreateFromCSV = useMutation(api.providers.bulkCreate);
@@ -50,10 +48,21 @@ export default function ProvidersPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const csvFileInputRef = useRef<HTMLInputElement>(null);
 
-  // For super_admin without healthSystemId, use the selected one. Otherwise use user's healthSystemId.
-  const effectiveHealthSystemId = currentUser?.healthSystemId || (selectedHealthSystemForImport as Id<"health_systems"> | undefined);
   const isSuperAdmin = currentUser?.role === "super_admin";
   const needsHealthSystemSelection = isSuperAdmin && !currentUser?.healthSystemId;
+
+  // For super_admin without healthSystemId, use the selected one. Otherwise use user's healthSystemId.
+  const effectiveHealthSystemId = currentUser?.healthSystemId || (selectedHealthSystemForImport as Id<"health_systems"> | undefined);
+
+  // Queries that depend on effectiveHealthSystemId (requires state to be defined first)
+  const jobTypes = useQuery(
+    api.jobTypes.list,
+    effectiveHealthSystemId ? { healthSystemId: effectiveHealthSystemId } : "skip"
+  );
+  const providers = useQuery(
+    api.providers.list,
+    effectiveHealthSystemId ? { healthSystemId: effectiveHealthSystemId } : {}
+  );
 
   const [formData, setFormData] = useState({
     firstName: "",
