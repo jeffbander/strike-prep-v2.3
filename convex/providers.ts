@@ -1061,6 +1061,138 @@ export const bulkUpsertProviders = mutation({
 });
 
 /**
+ * Bulk import providers from AMion .sch files
+ * Upserts by name within department (AMion doesn't have email)
+ */
+export const bulkImportFromAmion = mutation({
+  args: {
+    departmentId: v.id("departments"),
+    providers: v.array(
+      v.object({
+        firstName: v.string(),
+        lastName: v.string(),
+        cellPhone: v.optional(v.string()),
+        employeeId: v.optional(v.string()), // AMion abbreviation
+        jobTypeCode: v.string(), // e.g., "MD", "FEL", "NP", "PA"
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+
+    const currentUser = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .first();
+    if (!currentUser) throw new Error("User not found");
+
+    // Get department, hospital, health system
+    const department = await ctx.db.get(args.departmentId);
+    if (!department) throw new Error("Department not found");
+
+    const hospital = await ctx.db.get(department.hospitalId);
+    if (!hospital) throw new Error("Hospital not found");
+
+    // Build job type lookup map
+    const jobTypes = await ctx.db
+      .query("job_types")
+      .withIndex("by_health_system", (q) =>
+        q.eq("healthSystemId", department.healthSystemId)
+      )
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+    const jobTypeByCode = new Map(
+      jobTypes.map((jt) => [jt.code.toUpperCase(), jt])
+    );
+
+    const results = { created: 0, updated: 0, errors: [] as string[] };
+
+    for (let i = 0; i < args.providers.length; i++) {
+      const row = args.providers[i];
+      const rowNum = i + 1;
+
+      try {
+        // Validate required fields
+        if (!row.firstName?.trim() || !row.lastName?.trim()) {
+          results.errors.push(`Row ${rowNum}: Missing first or last name`);
+          continue;
+        }
+
+        // Lookup job type
+        const jobType = jobTypeByCode.get(row.jobTypeCode.toUpperCase());
+        if (!jobType) {
+          results.errors.push(
+            `Row ${rowNum}: Unknown job type "${row.jobTypeCode}"`
+          );
+          continue;
+        }
+
+        // Check for existing provider by name in this department
+        const existingProvider = await ctx.db
+          .query("providers")
+          .withIndex("by_department", (q) =>
+            q.eq("departmentId", args.departmentId)
+          )
+          .filter((q) =>
+            q.and(
+              q.eq(
+                q.field("firstName"),
+                row.firstName.trim()
+              ),
+              q.eq(
+                q.field("lastName"),
+                row.lastName.trim()
+              )
+            )
+          )
+          .first();
+
+        if (existingProvider) {
+          // UPDATE existing provider
+          await ctx.db.patch(existingProvider._id, {
+            jobTypeId: jobType._id,
+            cellPhone: row.cellPhone || existingProvider.cellPhone,
+            employeeId: row.employeeId || existingProvider.employeeId,
+            updatedAt: Date.now(),
+          });
+          results.updated++;
+        } else {
+          // CREATE new provider
+          const providerId = await ctx.db.insert("providers", {
+            healthSystemId: department.healthSystemId,
+            hospitalId: department.hospitalId,
+            departmentId: args.departmentId,
+            jobTypeId: jobType._id,
+            firstName: row.firstName.trim(),
+            lastName: row.lastName.trim(),
+            cellPhone: row.cellPhone || undefined,
+            employeeId: row.employeeId || undefined,
+            createdBy: currentUser._id,
+            isActive: true,
+            createdAt: Date.now(),
+          });
+
+          // Add home hospital to access list
+          await ctx.db.insert("provider_hospital_access", {
+            providerId,
+            hospitalId: department.hospitalId,
+          });
+
+          results.created++;
+        }
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        results.errors.push(`Row ${rowNum}: ${message}`);
+      }
+    }
+
+    return results;
+  },
+});
+
+/**
  * Helper: Sync provider skills (remove old, add new)
  */
 async function syncProviderSkills(

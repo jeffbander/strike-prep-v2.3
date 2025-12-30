@@ -9,6 +9,7 @@ import { Id } from "../../../../convex/_generated/dataModel";
 import * as XLSX from "xlsx";
 import ProviderImport from "@/components/providers/ProviderImport";
 import ProviderExport from "@/components/providers/ProviderExport";
+import AmionImport from "@/components/providers/AmionImport";
 
 export default function ProvidersPage() {
   const currentUser = useQuery(api.users.getCurrentUser);
@@ -37,6 +38,7 @@ export default function ProvidersPage() {
   const [isBulkUpload, setIsBulkUpload] = useState(false);
   const [isCSVUpload, setIsCSVUpload] = useState(false);
   const [isNewImportOpen, setIsNewImportOpen] = useState(false);
+  const [isAmionImportOpen, setIsAmionImportOpen] = useState(false);
   const [selectedHealthSystemForImport, setSelectedHealthSystemForImport] = useState<string>("");
   const [csvUploadDepartmentId, setCSVUploadDepartmentId] = useState("");
   const [csvPreviewData, setCSVPreviewData] = useState<any[] | null>(null);
@@ -513,6 +515,15 @@ export default function ProvidersPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
                   Import Providers
+                </button>
+                <button
+                  onClick={() => setIsAmionImportOpen(true)}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors text-sm flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  AMion Import
                 </button>
               </>
             )}
@@ -1226,6 +1237,15 @@ export default function ProvidersPage() {
             healthSystemId={effectiveHealthSystemId}
             isOpen={isNewImportOpen}
             onClose={() => setIsNewImportOpen(false)}
+          />
+        )}
+
+        {/* AMion Import Modal */}
+        {effectiveHealthSystemId && (
+          <AmionImport
+            healthSystemId={effectiveHealthSystemId}
+            isOpen={isAmionImportOpen}
+            onClose={() => setIsAmionImportOpen(false)}
           />
         )}
 
