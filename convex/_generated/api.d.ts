@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as amionSchedules from "../amionSchedules.js";
 import type * as auditLogs from "../auditLogs.js";
 import type * as claimTokens from "../claimTokens.js";
 import type * as departments from "../departments.js";
@@ -43,6 +44,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  amionSchedules: typeof amionSchedules;
   auditLogs: typeof auditLogs;
   claimTokens: typeof claimTokens;
   departments: typeof departments;

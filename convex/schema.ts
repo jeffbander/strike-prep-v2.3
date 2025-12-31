@@ -572,4 +572,62 @@ export default defineSchema({
     .index("by_scenario", ["scenarioId"])
     .index("by_provider", ["providerId"])
     .index("by_scenario_provider", ["scenarioId", "providerId"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // AMION IMPORTS
+  // Imported Amion schedule files for tracking source schedules
+  // ═══════════════════════════════════════════════════════════════════
+
+  amion_imports: defineTable({
+    healthSystemId: v.id("health_systems"),
+    hospitalId: v.optional(v.id("hospitals")),
+    departmentId: v.optional(v.id("departments")),
+    department: v.string(), // DEPT= from file (e.g., "Cardiology - MSW")
+    startDate: v.string(), // Schedule start date
+    endDate: v.string(), // Schedule end date
+    importedAt: v.number(),
+    importedBy: v.id("users"),
+    sourceFileName: v.optional(v.string()),
+    isActive: v.boolean(),
+  })
+    .index("by_health_system", ["healthSystemId"])
+    .index("by_hospital", ["hospitalId"])
+    .index("by_department", ["departmentId"])
+    .index("by_imported_at", ["importedAt"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // AMION SERVICES
+  // Services/shifts from xln section with redeployment classification
+  // ═══════════════════════════════════════════════════════════════════
+
+  amion_services: defineTable({
+    amionImportId: v.id("amion_imports"),
+    name: v.string(), // NAME= from xln
+    amionId: v.number(), // ID= (used in ROW decoding)
+    shiftDisplay: v.optional(v.string()), // "7a-5p" (display format)
+    redeploymentStatus: v.string(), // "redeployable" | "essential" | "unclassified"
+    isActive: v.boolean(),
+  })
+    .index("by_import", ["amionImportId"])
+    .index("by_redeployment_status", ["redeploymentStatus"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // AMION ASSIGNMENTS
+  // Daily assignments decoded from ROW data for schedule grid display
+  // ═══════════════════════════════════════════════════════════════════
+
+  amion_assignments: defineTable({
+    amionImportId: v.id("amion_imports"),
+    amionServiceId: v.id("amion_services"),
+    providerId: v.optional(v.id("providers")), // Linked provider (if matched)
+    providerName: v.string(), // Name from Amion (for display)
+    providerAmionId: v.number(), // ID= from staff section
+    date: v.string(), // "2025-12-01"
+    isActive: v.boolean(),
+  })
+    .index("by_import", ["amionImportId"])
+    .index("by_service", ["amionServiceId"])
+    .index("by_provider", ["providerId"])
+    .index("by_date", ["date"])
+    .index("by_import_date", ["amionImportId", "date"]),
 });
