@@ -2,6 +2,12 @@
  * AMion .sch File Parser
  * Parses the proprietary AMion schedule file format to extract provider data
  * and decode schedule assignments from ROW binary data
+ *
+ * Key technical details:
+ * - Epoch: January 1, 2000 (not 1990)
+ * - ROW data uses RLE encoding: (count, staffId) pairs after 2-byte header
+ * - Direction -1 means reverse chronological (newest first)
+ * - SPID field contains secondary provider for split shifts
  */
 
 export interface AmionProvider {
@@ -23,6 +29,8 @@ export interface AmionService {
   id: number;              // ID= from xln section (used for ROW decoding)
   shiftDisplay?: string;   // "7a-5p" display format
   rawRowData?: string;     // Binary ROW data for decoding
+  rawSpidData?: string;    // Secondary provider ROW data (split shifts)
+  isGenericTitle?: boolean; // True if name is generic like "Consult Fellow"
 }
 
 export interface AmionAssignment {
@@ -31,6 +39,9 @@ export interface AmionAssignment {
   providerId: number;      // Staff ID (decoded from ROW)
   providerName: string;
   date: string;            // "2025-12-01"
+  secondaryProviderId?: number;    // For split shifts
+  secondaryProviderName?: string;  // For split shifts
+  isGenericTitle?: boolean;        // True if provider name is generic
 }
 
 export interface AmionParseResult {
@@ -45,7 +56,19 @@ export interface AmionParseResult {
   assignments: AmionAssignment[];
   staffIdMap: Map<number, AmionProvider>;
   scheduleStartDate: string;
+  scheduleEndDate: string;
   scheduleYear: number;
+  scheduleEndYear?: number;  // End year from YEAR field (e.g., 2026 from "YEAR=2024...2026")
+}
+
+// ROW header parameters extracted from the ROW line
+interface RowHeaderParams {
+  startOffset: number;    // Reference point (often 1167)
+  count: number;          // Number of schedule entries
+  direction: number;      // -1 = reverse chronological, 1 = forward
+  increment: number;      // -7 = weekly blocks, -1 = daily
+  bytesPerEntry: number;  // Bytes per time slot
+  binaryData: string;     // The actual binary data between < and >
 }
 
 // AMion TYPE codes to role labels
@@ -67,16 +90,169 @@ export const AMION_TO_JOBTYPE: Record<string, string> = {
   "PA": "PA",
 };
 
+// AMion epoch: January 1, 2000
+const AMION_EPOCH = new Date(2000, 0, 1);
+
+// Special byte values in ROW data
+const SPECIAL_BYTES = {
+  EMPTY: 0,
+  EMPTY_SLOT: 250,    // 0xFA - empty slot marker
+  DISABLED: 255,      // 0xFF - disabled/not applicable
+  WEEK_MARKER_1: 252, // 0xFC - weekly override section marker
+  WEEK_MARKER_2: 7,   // 0x07 - paired with WEEK_MARKER_1
+};
+
+// Generic title patterns that should be flagged
+const GENERIC_TITLE_PATTERNS = [
+  /fellow/i,
+  /consult/i,
+  /resident/i,
+  /on.?call/i,
+  /attending$/i,  // Just "Attending" alone
+  /^md$/i,
+  /coverage/i,
+  /backup/i,
+  /float/i,
+];
+
+/**
+ * Check if a name is a generic title (not a real person's name)
+ */
+function isGenericTitle(name: string): boolean {
+  if (!name) return false;
+  // If it contains a comma (like "BANDER, J."), it's likely a real name
+  if (name.includes(",")) return false;
+  // If it's just one or two words and matches a pattern, it's generic
+  return GENERIC_TITLE_PATTERNS.some(pattern => pattern.test(name));
+}
+
 /**
  * Convert Julian day number to a Date object
- * AMion uses a custom epoch: day 0 = Jan 1, 1990
+ * AMion uses epoch: January 1, 2000
  */
 function julianDayToDate(jday: number): Date {
-  // AMion epoch: January 1, 1990
-  const epoch = new Date(1990, 0, 1);
-  const result = new Date(epoch);
-  result.setDate(epoch.getDate() + jday);
+  return new Date(AMION_EPOCH.getTime() + jday * 86400000);
+}
+
+/**
+ * Convert Date to Julian day number
+ */
+function dateToJulianDay(date: Date): number {
+  return Math.floor((date.getTime() - AMION_EPOCH.getTime()) / 86400000);
+}
+
+/**
+ * Parse ROW header parameters from a ROW line
+ * Format: ROW =1167 269 -1 -7 70 <binary_data>
+ */
+function parseRowHeader(rowLine: string): RowHeaderParams | null {
+  // Match: startOffset count direction increment bytesPerEntry <data>
+  const match = rowLine.match(/(\d+)\s+(\d+)\s+(-?\d+)\s+(-?\d+)\s+(\d+)\s*<([^>]*)>/);
+  if (!match) return null;
+
+  return {
+    startOffset: parseInt(match[1], 10),
+    count: parseInt(match[2], 10),
+    direction: parseInt(match[3], 10),
+    increment: parseInt(match[4], 10),
+    bytesPerEntry: parseInt(match[5], 10),
+    binaryData: match[6],
+  };
+}
+
+/**
+ * Extract byte values from binary string data
+ */
+function extractBytes(rawData: string): number[] {
+  const bytes: number[] = [];
+  for (let i = 0; i < rawData.length; i++) {
+    bytes.push(rawData.charCodeAt(i));
+  }
+  return bytes;
+}
+
+/**
+ * Decode Run-Length Encoded schedule data
+ * Format: [header1] [header2] [count1] [staffId1] [count2] [staffId2] ...
+ *
+ * Each (count, staffId) pair means "staffId is assigned for 'count' consecutive days"
+ */
+function decodeRLE(bytes: number[]): number[] {
+  const result: number[] = [];
+  let i = 2; // Skip 2-byte header
+
+  while (i < bytes.length - 1) {
+    const count = bytes[i];
+    const staffId = bytes[i + 1];
+
+    // Validate count - skip if 0 or unreasonably large
+    if (count === 0 || count > 50) {
+      i++;
+      continue;
+    }
+
+    // Check for weekly override marker (0xFC 0x07)
+    if (count === SPECIAL_BYTES.WEEK_MARKER_1 && staffId === SPECIAL_BYTES.WEEK_MARKER_2) {
+      // Skip override section: marker + ref + sep + 7 days
+      i += 11;
+      continue;
+    }
+
+    // Add staffId 'count' times
+    for (let j = 0; j < count; j++) {
+      result.push(staffId);
+    }
+
+    i += 2;
+  }
+
   return result;
+}
+
+/**
+ * Calculate dates for decoded schedule entries
+ *
+ * The startOffset in ROW data is a reference point, but not a direct Julian day
+ * for the schedule dates. We need to calibrate using known metadata.
+ *
+ * Strategy: Use the YEAR field's end year to estimate the schedule's end date,
+ * then work backwards based on the number of decoded entries.
+ */
+function calculateDates(
+  startOffset: number,
+  decodedIds: number[],
+  direction: number,
+  scheduleEndYear?: number
+): Date[] {
+  const dates: Date[] = [];
+  const totalDays = decodedIds.length;
+
+  // Default to current year if no schedule year provided
+  const endYear = scheduleEndYear || new Date().getFullYear();
+
+  // Assume the schedule ends at December 31 of the end year
+  // (or use a reference date near "now" if schedule year matches current year)
+  let referenceDate: Date;
+  const currentYear = new Date().getFullYear();
+
+  if (endYear >= currentYear) {
+    // Schedule includes current/future year - use today as a rough endpoint
+    referenceDate = new Date();
+  } else {
+    // Schedule is historical - use end of that year
+    referenceDate = new Date(endYear, 11, 31);
+  }
+
+  // Calculate dates working backwards from reference
+  for (let i = 0; i < totalDays; i++) {
+    const date = new Date(referenceDate);
+    // Index 0 = oldest date (after reversing), so:
+    // date = referenceDate - (totalDays - 1 - i)
+    date.setDate(date.getDate() - (totalDays - 1 - i));
+    dates.push(date);
+  }
+
+  return dates;
 }
 
 /**
@@ -107,51 +283,78 @@ function parseShiftTime(shtm: string): string | undefined {
 }
 
 /**
- * Decode ROW binary data to extract daily assignments
- * Each character's ASCII value = staff ID for that day
+ * Decode ROW binary data to extract daily assignments using proper RLE decoding
  *
- * ROW format: ROW =1167 [param1] -1 -7 [numDays] <[binary_data]>
- * - 1167 is a base reference
- * - numDays is the number of days in the schedule
- * - binary_data contains staff IDs as ASCII characters
+ * ROW format: ROW =startOffset count direction increment bytesPerEntry <binary_data>
+ * Binary data uses RLE: [header1] [header2] [count1] [staffId1] [count2] [staffId2] ...
  */
 function decodeROWData(
   rowData: string,
+  spidData: string | undefined,
   serviceId: number,
   serviceName: string,
-  startDate: Date,
-  staffIdMap: Map<number, AmionProvider>
+  staffIdMap: Map<number, AmionProvider>,
+  scheduleEndYear?: number
 ): AmionAssignment[] {
   const assignments: AmionAssignment[] = [];
 
-  // Extract binary content between < and >
-  // Handle multi-line ROW data
-  const match = rowData.match(/<([^>]*)>/);
-  if (!match) return assignments;
+  // Parse ROW header and binary data
+  const rowParams = parseRowHeader(rowData);
+  if (!rowParams) return assignments;
 
-  const binaryData = match[1];
+  // Decode primary provider assignments
+  const primaryBytes = extractBytes(rowParams.binaryData);
+  let primaryIds = decodeRLE(primaryBytes);
 
-  for (let i = 0; i < binaryData.length; i++) {
-    const charCode = binaryData.charCodeAt(i);
-
-    // Skip control characters and special chars (no assignment or separator)
-    if (charCode < 33 || charCode > 200) continue;
-
-    const staffId = charCode;
-    const staff = staffIdMap.get(staffId);
-
-    if (staff) {
-      const date = new Date(startDate);
-      date.setDate(date.getDate() + i);
-
-      assignments.push({
-        serviceId,
-        serviceName,
-        providerId: staffId,
-        providerName: staff.name,
-        date: date.toISOString().split('T')[0],
-      });
+  // Decode secondary provider assignments (split shifts) if SPID exists
+  let secondaryIds: number[] = [];
+  if (spidData) {
+    const spidParams = parseRowHeader(spidData);
+    if (spidParams) {
+      const spidBytes = extractBytes(spidParams.binaryData);
+      secondaryIds = decodeRLE(spidBytes);
     }
+  }
+
+  // Reverse if direction is -1 (data stored newest first)
+  if (rowParams.direction === -1) {
+    primaryIds = primaryIds.reverse();
+    if (secondaryIds.length > 0) {
+      secondaryIds = secondaryIds.reverse();
+    }
+  }
+
+  // Calculate dates based on schedule end year
+  const dates = calculateDates(rowParams.startOffset, primaryIds, rowParams.direction, scheduleEndYear);
+
+  // Create assignments for each day
+  for (let i = 0; i < primaryIds.length; i++) {
+    const primaryId = primaryIds[i];
+    const secondaryId = secondaryIds[i];
+    const date = dates[i];
+
+    // Skip empty assignments
+    if (primaryId === SPECIAL_BYTES.EMPTY || primaryId === SPECIAL_BYTES.EMPTY_SLOT) {
+      continue;
+    }
+
+    const primaryStaff = staffIdMap.get(primaryId);
+    const secondaryStaff = secondaryId ? staffIdMap.get(secondaryId) : undefined;
+
+    // Get provider name - could be from staff map or might be a generic title
+    const providerName = primaryStaff?.name || `Staff ID ${primaryId}`;
+    const secondaryName = secondaryStaff?.name;
+
+    assignments.push({
+      serviceId,
+      serviceName,
+      providerId: primaryId,
+      providerName,
+      date: date.toISOString().split('T')[0],
+      secondaryProviderId: secondaryId && secondaryId !== SPECIAL_BYTES.EMPTY ? secondaryId : undefined,
+      secondaryProviderName: secondaryName,
+      isGenericTitle: isGenericTitle(providerName) || isGenericTitle(serviceName),
+    });
   }
 
   return assignments;
@@ -174,7 +377,9 @@ export function parseAmionFile(content: string): AmionParseResult {
     assignments: [],
     staffIdMap: new Map(),
     scheduleStartDate: "",
+    scheduleEndDate: "",
     scheduleYear: new Date().getFullYear(),
+    scheduleEndYear: undefined,
   };
 
   let currentSection = "";
@@ -183,7 +388,9 @@ export function parseAmionFile(content: string): AmionParseResult {
   let currentSkill = "";
   let scheduleJday = 0;
   let collectingRowData = false;
+  let collectingSpidData = false;
   let rowDataBuffer = "";
+  let spidDataBuffer = "";
   let currentShiftTime = "";
 
   for (let i = 0; i < lines.length; i++) {
@@ -225,6 +432,20 @@ export function parseAmionFile(content: string): AmionParseResult {
       continue;
     }
 
+    // Handle multi-line SPID data collection
+    if (collectingSpidData) {
+      spidDataBuffer += line;
+      if (line.includes('>')) {
+        collectingSpidData = false;
+        // Finalize the service with SPID data
+        if (currentService) {
+          currentService.rawSpidData = spidDataBuffer;
+        }
+        spidDataBuffer = "";
+      }
+      continue;
+    }
+
     // Metadata
     if (trimmed.startsWith("DEPT=")) {
       result.department = trimmed.substring(5);
@@ -240,9 +461,21 @@ export function parseAmionFile(content: string): AmionParseResult {
     }
     if (trimmed.startsWith("YEAR=")) {
       // Format: YEAR=2024 1 8 :2024 2026
-      const yearMatch = trimmed.match(/YEAR=(\d+)/);
+      // First number is base year, last number after colon is end year
+      const yearMatch = trimmed.match(/YEAR=(\d+).*:(\d+)\s+(\d+)/);
       if (yearMatch) {
         result.scheduleYear = parseInt(yearMatch[1], 10);
+        // The end year is the last number in the sequence
+        const endYear = parseInt(yearMatch[3], 10);
+        if (endYear > result.scheduleYear) {
+          result.scheduleEndYear = endYear;
+        }
+      } else {
+        // Fallback to simple match
+        const simpleMatch = trimmed.match(/YEAR=(\d+)/);
+        if (simpleMatch) {
+          result.scheduleYear = parseInt(simpleMatch[1], 10);
+        }
       }
       continue;
     }
@@ -332,9 +565,11 @@ export function parseAmionFile(content: string): AmionParseResult {
         if (currentService && currentService.name) {
           result.amionServices.push(currentService as AmionService);
         }
+        const serviceName = trimmed.substring(5);
         currentService = {
-          name: trimmed.substring(5),
+          name: serviceName,
           id: 0,
+          isGenericTitle: isGenericTitle(serviceName),
         };
         currentShiftTime = "";
       } else if (currentService) {
@@ -351,6 +586,15 @@ export function parseAmionFile(content: string): AmionParseResult {
           } else {
             currentService.rawRowData = rowDataBuffer;
             rowDataBuffer = "";
+          }
+        } else if (trimmed.startsWith("SPID=")) {
+          // SPID data for secondary provider (split shifts)
+          spidDataBuffer = trimmed.substring(5);
+          if (!trimmed.includes('>')) {
+            collectingSpidData = true;
+          } else {
+            currentService.rawSpidData = spidDataBuffer;
+            spidDataBuffer = "";
           }
         }
       }
@@ -380,21 +624,28 @@ export function parseAmionFile(content: string): AmionParseResult {
   }
 
   // Decode ROW data for all services to get assignments
-  if (result.scheduleStartDate && result.staffIdMap.size > 0) {
-    const startDate = new Date(result.scheduleStartDate);
-
+  // Note: We decode regardless of scheduleStartDate since dates come from ROW header
+  if (result.staffIdMap.size > 0) {
     for (const service of result.amionServices) {
       if (service.rawRowData) {
         const serviceAssignments = decodeROWData(
           service.rawRowData,
+          service.rawSpidData,
           service.id,
           service.name,
-          startDate,
-          result.staffIdMap
+          result.staffIdMap,
+          result.scheduleEndYear || result.scheduleYear
         );
         result.assignments.push(...serviceAssignments);
       }
     }
+  }
+
+  // Calculate schedule date range from assignments
+  if (result.assignments.length > 0) {
+    const dates = result.assignments.map(a => a.date).sort();
+    result.scheduleStartDate = dates[0];
+    result.scheduleEndDate = dates[dates.length - 1];
   }
 
   return result;
