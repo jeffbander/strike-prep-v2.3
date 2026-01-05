@@ -10,6 +10,8 @@ import { parseAmionFile, getParseStats, getScheduleDates } from "@/lib/amionPars
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -25,6 +27,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 
 export default function AmionSchedulePage() {
   const currentUser = useQuery(api.users.getCurrentUser);
@@ -44,7 +52,36 @@ export default function AmionSchedulePage() {
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Web scraping state
+  const [scrapeConfig, setScrapeConfig] = useState({
+    siteCode: "mssm",
+    locationCode: "msw20lqu",
+    startDate: "",
+    endDate: "",
+  });
+  const [isScraping, setIsScraping] = useState(false);
+  const [scrapePreview, setScrapePreview] = useState<{
+    department: string;
+    servicesCount: number;
+    assignmentsCount: number;
+    splitShifts: number;
+    data: {
+      services: Array<{ name: string; shiftDisplay?: string }>;
+      assignments: Array<{
+        serviceName: string;
+        date: string;
+        primaryProviderName: string;
+        primaryShiftStart?: string;
+        primaryShiftEnd?: string;
+        secondaryProviderName?: string;
+        secondaryShiftStart?: string;
+        secondaryShiftEnd?: string;
+      }>;
+    };
+  } | null>(null);
+
   const importSchedule = useMutation(api.amionSchedules.importAmionSchedule);
+  const importWebScraped = useMutation(api.amionSchedules.importWebScrapedSchedule);
   const deleteImport = useMutation(api.amionSchedules.deleteImport);
 
   const isSuperAdmin = currentUser?.role === "super_admin";
@@ -154,6 +191,97 @@ export default function AmionSchedulePage() {
       }
     } catch (error) {
       toast.error("Failed to delete import");
+    }
+  };
+
+  // Handle web scraping
+  const handleScrape = async () => {
+    if (!scrapeConfig.startDate || !scrapeConfig.endDate) {
+      toast.error("Please select start and end dates");
+      return;
+    }
+
+    setIsScraping(true);
+    try {
+      const response = await fetch("/api/amion/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(scrapeConfig),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Scraping failed");
+      }
+
+      const result = await response.json();
+
+      if (result.success && result.data) {
+        setScrapePreview({
+          department: result.data.department,
+          servicesCount: result.stats.servicesFound,
+          assignmentsCount: result.stats.assignmentsFound,
+          splitShifts: result.stats.splitShifts,
+          data: {
+            services: result.data.services,
+            assignments: result.data.assignments.map((a: {
+              date: string;
+              serviceName: string;
+              primaryProviderName: string;
+              primaryShiftStart?: string;
+              primaryShiftEnd?: string;
+              secondaryProviderName?: string;
+              secondaryShiftStart?: string;
+              secondaryShiftEnd?: string;
+            }) => ({
+              serviceName: a.serviceName,
+              date: a.date,
+              primaryProviderName: a.primaryProviderName,
+              primaryShiftStart: a.primaryShiftStart,
+              primaryShiftEnd: a.primaryShiftEnd,
+              secondaryProviderName: a.secondaryProviderName,
+              secondaryShiftStart: a.secondaryShiftStart,
+              secondaryShiftEnd: a.secondaryShiftEnd,
+            })),
+          },
+        });
+        toast.success(`Found ${result.stats.assignmentsFound} assignments (${result.stats.splitShifts} split shifts)`);
+      }
+    } catch (error) {
+      console.error("Scrape error:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to scrape Amion");
+    } finally {
+      setIsScraping(false);
+    }
+  };
+
+  // Import scraped data
+  const handleImportScraped = async () => {
+    if (!scrapePreview || !effectiveHealthSystemId) return;
+
+    setIsUploading(true);
+    try {
+      const result = await importWebScraped({
+        healthSystemId: effectiveHealthSystemId,
+        department: scrapePreview.department || `${scrapeConfig.siteCode} Schedule`,
+        startDate: scrapeConfig.startDate,
+        endDate: scrapeConfig.endDate,
+        siteCode: scrapeConfig.siteCode,
+        locationCode: scrapeConfig.locationCode,
+        services: scrapePreview.data.services,
+        assignments: scrapePreview.data.assignments,
+      });
+
+      toast.success(
+        `Imported ${result.assignmentsCreated} assignments (${result.splitShiftsCreated} split shifts)`
+      );
+      setScrapePreview(null);
+      setSelectedImportId(result.importId);
+    } catch (error) {
+      console.error("Import error:", error);
+      toast.error("Failed to import scraped schedule");
+    } finally {
+      setIsUploading(false);
     }
   };
 

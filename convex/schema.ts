@@ -614,20 +614,61 @@ export default defineSchema({
   // ═══════════════════════════════════════════════════════════════════
   // AMION ASSIGNMENTS
   // Daily assignments decoded from ROW data for schedule grid display
+  // Supports split shifts with primary and secondary providers
   // ═══════════════════════════════════════════════════════════════════
 
   amion_assignments: defineTable({
     amionImportId: v.id("amion_imports"),
     amionServiceId: v.id("amion_services"),
+
+    // Primary provider (always present)
     providerId: v.optional(v.id("providers")), // Linked provider (if matched)
     providerName: v.string(), // Name from Amion (for display)
     providerAmionId: v.number(), // ID= from staff section
+    shiftStart: v.optional(v.string()), // "7a" or "07:00" - start time for primary
+    shiftEnd: v.optional(v.string()), // "5p" or "17:00" - end time for primary
+
+    // Secondary provider (for split shifts like "Shahab 7a-5p / GOLDFINGER 5p-7a")
+    secondaryProviderId: v.optional(v.id("providers")), // Linked secondary provider
+    secondaryProviderName: v.optional(v.string()), // Secondary provider name from Amion
+    secondaryProviderAmionId: v.optional(v.number()), // Secondary provider Amion ID
+    secondaryShiftStart: v.optional(v.string()), // "5p" or "17:00"
+    secondaryShiftEnd: v.optional(v.string()), // "7a" or "07:00"
+
     date: v.string(), // "2025-12-01"
     isActive: v.boolean(),
   })
     .index("by_import", ["amionImportId"])
     .index("by_service", ["amionServiceId"])
     .index("by_provider", ["providerId"])
+    .index("by_secondary_provider", ["secondaryProviderId"])
     .index("by_date", ["date"])
     .index("by_import_date", ["amionImportId", "date"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // AMION WEB CONFIGS
+  // Configuration for web scraping Amion schedules
+  // ═══════════════════════════════════════════════════════════════════
+
+  amion_web_configs: defineTable({
+    healthSystemId: v.id("health_systems"),
+    hospitalId: v.optional(v.id("hospitals")),
+    departmentId: v.optional(v.id("departments")),
+
+    name: v.string(), // "MSW Cardiology"
+    siteCode: v.string(), // "mssm"
+    locationCode: v.string(), // "msw20lqu" (Lo= parameter)
+
+    // Optional credentials for authenticated scraping
+    username: v.optional(v.string()),
+    // Note: passwords should be stored in environment variables, not database
+
+    isActive: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    lastScrapedAt: v.optional(v.number()),
+  })
+    .index("by_health_system", ["healthSystemId"])
+    .index("by_site_code", ["siteCode"])
+    .index("by_active", ["isActive"]),
 });

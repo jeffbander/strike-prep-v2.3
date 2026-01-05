@@ -466,12 +466,381 @@ export const getImportStats = query({
     const dates = assignments.map((a) => a.date).sort();
     const dateRange = dates.length > 0 ? { start: dates[0], end: dates[dates.length - 1] } : null;
 
+    // Count split shifts
+    const splitShiftCount = assignments.filter((a) => a.secondaryProviderName).length;
+
+    // Unique providers (including secondary)
+    const allProviderIds = new Set<number>();
+    for (const a of assignments) {
+      allProviderIds.add(a.providerAmionId);
+      if (a.secondaryProviderAmionId) {
+        allProviderIds.add(a.secondaryProviderAmionId);
+      }
+    }
+
     return {
       totalServices: services.length,
       totalAssignments: assignments.length,
-      uniqueProviders,
+      uniqueProviders: allProviderIds.size,
+      splitShiftCount,
       byStatus,
       dateRange,
     };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// SPLIT SHIFT / WEB SCRAPED IMPORT
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Import web-scraped Amion schedule with split shift support
+ */
+export const importWebScrapedSchedule = mutation({
+  args: {
+    healthSystemId: v.id("health_systems"),
+    hospitalId: v.optional(v.id("hospitals")),
+    departmentId: v.optional(v.id("departments")),
+    department: v.string(),
+    startDate: v.string(),
+    endDate: v.string(),
+    siteCode: v.string(),
+    locationCode: v.string(),
+    services: v.array(
+      v.object({
+        name: v.string(),
+        shiftDisplay: v.optional(v.string()),
+      })
+    ),
+    assignments: v.array(
+      v.object({
+        serviceName: v.string(),
+        date: v.string(),
+        primaryProviderName: v.string(),
+        primaryShiftStart: v.optional(v.string()),
+        primaryShiftEnd: v.optional(v.string()),
+        secondaryProviderName: v.optional(v.string()),
+        secondaryShiftStart: v.optional(v.string()),
+        secondaryShiftEnd: v.optional(v.string()),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .unique();
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Create import record
+    const importId = await ctx.db.insert("amion_imports", {
+      healthSystemId: args.healthSystemId,
+      hospitalId: args.hospitalId,
+      departmentId: args.departmentId,
+      department: args.department,
+      startDate: args.startDate,
+      endDate: args.endDate,
+      importedAt: Date.now(),
+      importedBy: user._id,
+      sourceFileName: `web_scrape_${args.siteCode}_${args.locationCode}`,
+      isActive: true,
+    });
+
+    // Create service records
+    const serviceIdMap = new Map<string, Id<"amion_services">>();
+    let serviceCounter = 1000;
+
+    for (const service of args.services) {
+      const serviceId = await ctx.db.insert("amion_services", {
+        amionImportId: importId,
+        name: service.name,
+        amionId: serviceCounter++,
+        shiftDisplay: service.shiftDisplay,
+        redeploymentStatus: "unclassified",
+        isActive: true,
+      });
+      serviceIdMap.set(service.name, serviceId);
+    }
+
+    // Create assignment records with split shift support
+    let assignmentsCreated = 0;
+    let splitShiftsCreated = 0;
+
+    for (const assignment of args.assignments) {
+      let serviceId = serviceIdMap.get(assignment.serviceName);
+      if (!serviceId) {
+        serviceId = await ctx.db.insert("amion_services", {
+          amionImportId: importId,
+          name: assignment.serviceName,
+          amionId: serviceCounter++,
+          redeploymentStatus: "unclassified",
+          isActive: true,
+        });
+        serviceIdMap.set(assignment.serviceName, serviceId);
+      }
+
+      const primaryAmionId = hashProviderName(assignment.primaryProviderName);
+      const secondaryAmionId = assignment.secondaryProviderName
+        ? hashProviderName(assignment.secondaryProviderName)
+        : undefined;
+
+      await ctx.db.insert("amion_assignments", {
+        amionImportId: importId,
+        amionServiceId: serviceId,
+        providerName: assignment.primaryProviderName,
+        providerAmionId: primaryAmionId,
+        shiftStart: assignment.primaryShiftStart,
+        shiftEnd: assignment.primaryShiftEnd,
+        secondaryProviderName: assignment.secondaryProviderName,
+        secondaryProviderAmionId: secondaryAmionId,
+        secondaryShiftStart: assignment.secondaryShiftStart,
+        secondaryShiftEnd: assignment.secondaryShiftEnd,
+        date: assignment.date,
+        isActive: true,
+      });
+
+      assignmentsCreated++;
+      if (assignment.secondaryProviderName) {
+        splitShiftsCreated++;
+      }
+    }
+
+    return {
+      importId,
+      servicesCreated: args.services.length,
+      assignmentsCreated,
+      splitShiftsCreated,
+    };
+  },
+});
+
+function hashProviderName(name: string): number {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    const char = name.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash) % 100000 + 10000;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PROVIDER LINKING / CONFLICT DETECTION
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Auto-link Amion assignments to system providers by name matching
+ */
+export const autoLinkProviders = mutation({
+  args: {
+    importId: v.id("amion_imports"),
+    departmentId: v.id("departments"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const assignments = await ctx.db
+      .query("amion_assignments")
+      .withIndex("by_import", (q) => q.eq("amionImportId", args.importId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    const providers = await ctx.db
+      .query("providers")
+      .withIndex("by_department_active", (q) =>
+        q.eq("departmentId", args.departmentId).eq("isActive", true)
+      )
+      .collect();
+
+    const providerByLastName = new Map<string, Id<"providers">>();
+    for (const p of providers) {
+      providerByLastName.set(p.lastName.toLowerCase(), p._id);
+    }
+
+    let linkedCount = 0;
+    let secondaryLinkedCount = 0;
+
+    for (const assignment of assignments) {
+      if (!assignment.providerId) {
+        const lastName = extractLastName(assignment.providerName);
+        const matchedProvider = providerByLastName.get(lastName.toLowerCase());
+        if (matchedProvider) {
+          await ctx.db.patch(assignment._id, { providerId: matchedProvider });
+          linkedCount++;
+        }
+      }
+
+      if (assignment.secondaryProviderName && !assignment.secondaryProviderId) {
+        const lastName = extractLastName(assignment.secondaryProviderName);
+        const matchedProvider = providerByLastName.get(lastName.toLowerCase());
+        if (matchedProvider) {
+          await ctx.db.patch(assignment._id, { secondaryProviderId: matchedProvider });
+          secondaryLinkedCount++;
+        }
+      }
+    }
+
+    return { linkedCount, secondaryLinkedCount };
+  },
+});
+
+function extractLastName(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed.includes(",")) {
+    return trimmed.split(",")[0].trim();
+  }
+  const parts = trimmed.split(/\s+/);
+  if (parts.length > 1) {
+    return parts[parts.length - 1];
+  }
+  return trimmed;
+}
+
+/**
+ * Get provider conflicts during strike dates
+ */
+export const getProviderConflicts = query({
+  args: {
+    scenarioId: v.id("strike_scenarios"),
+    importId: v.id("amion_imports"),
+  },
+  handler: async (ctx, args) => {
+    const scenario = await ctx.db.get(args.scenarioId);
+    if (!scenario) return [];
+
+    const assignments = await ctx.db
+      .query("amion_assignments")
+      .withIndex("by_import", (q) => q.eq("amionImportId", args.importId))
+      .filter((q) =>
+        q.and(
+          q.gte(q.field("date"), scenario.startDate),
+          q.lte(q.field("date"), scenario.endDate),
+          q.eq(q.field("isActive"), true)
+        )
+      )
+      .collect();
+
+    const scenarioAssignments = await ctx.db
+      .query("scenario_assignments")
+      .withIndex("by_scenario", (q) => q.eq("scenarioId", args.scenarioId))
+      .filter((q) => q.eq(q.field("status"), "Active"))
+      .collect();
+
+    const assignedProviderIds = new Set<string>();
+    for (const sa of scenarioAssignments) {
+      assignedProviderIds.add(sa.providerId);
+    }
+
+    const conflicts: Array<{
+      amionAssignment: typeof assignments[0];
+      scenarioDate: string;
+      providerName: string;
+      isSecondary: boolean;
+    }> = [];
+
+    for (const assignment of assignments) {
+      if (assignment.providerId && assignedProviderIds.has(assignment.providerId)) {
+        conflicts.push({
+          amionAssignment: assignment,
+          scenarioDate: assignment.date,
+          providerName: assignment.providerName,
+          isSecondary: false,
+        });
+      }
+
+      if (assignment.secondaryProviderId && assignedProviderIds.has(assignment.secondaryProviderId)) {
+        conflicts.push({
+          amionAssignment: assignment,
+          scenarioDate: assignment.date,
+          providerName: assignment.secondaryProviderName || "Unknown",
+          isSecondary: true,
+        });
+      }
+    }
+
+    return conflicts;
+  },
+});
+
+/**
+ * Get available providers (not assigned in Amion for dates)
+ */
+export const getAvailableProviders = query({
+  args: {
+    importId: v.id("amion_imports"),
+    departmentId: v.id("departments"),
+    dates: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const allProviders = await ctx.db
+      .query("providers")
+      .withIndex("by_department_active", (q) =>
+        q.eq("departmentId", args.departmentId).eq("isActive", true)
+      )
+      .collect();
+
+    const assignments = await ctx.db
+      .query("amion_assignments")
+      .withIndex("by_import", (q) => q.eq("amionImportId", args.importId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    const filteredAssignments = assignments.filter((a) => args.dates.includes(a.date));
+
+    const assignedByDate = new Map<string, Set<string>>();
+    for (const date of args.dates) {
+      assignedByDate.set(date, new Set());
+    }
+
+    for (const assignment of filteredAssignments) {
+      const dateSet = assignedByDate.get(assignment.date);
+      if (dateSet) {
+        if (assignment.providerId) {
+          dateSet.add(assignment.providerId);
+        }
+        if (assignment.secondaryProviderId) {
+          dateSet.add(assignment.secondaryProviderId);
+        }
+      }
+    }
+
+    const availability: Array<{
+      provider: typeof allProviders[0];
+      availableDates: string[];
+      unavailableDates: string[];
+    }> = [];
+
+    for (const provider of allProviders) {
+      const availableDates: string[] = [];
+      const unavailableDates: string[] = [];
+
+      for (const date of args.dates) {
+        const dateSet = assignedByDate.get(date);
+        if (dateSet && dateSet.has(provider._id)) {
+          unavailableDates.push(date);
+        } else {
+          availableDates.push(date);
+        }
+      }
+
+      availability.push({
+        provider,
+        availableDates,
+        unavailableDates,
+      });
+    }
+
+    return availability;
   },
 });
