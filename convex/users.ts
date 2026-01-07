@@ -2,8 +2,11 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { emailSchema, optionalSafeTextSchema, validateField } from "./lib/validation";
 
-// The super admin email - hardcoded for bootstrap
-const SUPER_ADMIN_EMAIL = "notifications@providerloop.com";
+// Super admin emails - hardcoded for bootstrap
+const SUPER_ADMIN_EMAILS = [
+  "notifications@providerloop.com",
+  "jeffrey.bander@gmail.com",
+];
 
 /**
  * Called when a user signs in or signs up via Clerk
@@ -37,7 +40,9 @@ export const syncUser = mutation({
     }
 
     // New user - check if they should be super admin
-    const isSuperAdmin = args.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+    const isSuperAdmin = SUPER_ADMIN_EMAILS.some(
+      (email) => email.toLowerCase() === args.email.toLowerCase()
+    );
 
     // Check if this user was pre-invited by an admin
     if (!isSuperAdmin) {
