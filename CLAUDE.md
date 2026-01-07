@@ -163,21 +163,32 @@ npx convex dev --once
 
 ---
 
-## CRITICAL: Convex Deployment
+## CI/CD & Deployment
 
-**ALWAYS run `npx convex dev --once` after modifying any files in the `convex/` directory!**
+This project uses **automated CI/CD** with GitHub and Vercel:
 
-The Convex backend runs separately from Next.js. Changes to Convex functions (mutations, queries, actions) are NOT automatically deployed. You must:
+### Deployment Flow
+1. **Push to GitHub** → Triggers automatic deployment
+2. **Vercel** builds and deploys the Next.js frontend
+3. **Convex** backend is deployed automatically via Vercel integration
 
-1. Make changes to files in `convex/`
-2. Run `npx convex dev --once` to push changes to the backend
-3. Verify no TypeScript errors block deployment
-4. Test the changes in the browser
+### Environments
+| Environment | Convex Instance | Controlled By |
+|-------------|-----------------|---------------|
+| Development | `dev:amiable-frog-863` | Local `.env.local` |
+| Production | Separate prod instance | Vercel env variables |
 
-**Common symptoms of forgetting this:**
-- "Could not find public function for 'moduleName:functionName'"
-- New mutations/queries not available on the client
-- Old function behavior persists after code changes
+**Environment variables on Vercel** control which Convex database is used:
+- `CONVEX_DEPLOYMENT` - Points to dev or prod Convex instance
+- `NEXT_PUBLIC_CONVEX_URL` - Public Convex endpoint
+
+### Local Development
+For local testing, you may need to sync Convex schema changes:
+```bash
+npx convex dev --once  # Push schema/function changes to dev instance
+```
+
+This is only needed locally. Production deploys happen automatically on push.
 
 **TypeScript Errors Block Deployment:**
 If there are TypeScript errors anywhere in the `convex/` directory, the deployment will fail. Fix ALL TypeScript errors before pushing.

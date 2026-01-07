@@ -1,6 +1,13 @@
 /**
  * AMion .sch File Parser
  * Parses the proprietary AMion schedule file format to extract provider data
+ * and decode schedule assignments from ROW binary data
+ *
+ * Key technical details:
+ * - Epoch: January 1, 2000 (not 1990)
+ * - ROW data uses RLE encoding: (count, staffId) pairs after 2-byte header
+ * - Direction -1 means reverse chronological (newest first)
+ * - SPID field contains secondary provider for split shifts
  */
 
 export interface AmionProvider {
@@ -10,51 +17,58 @@ export interface AmionProvider {
   abbreviation: string;
   type: number;
   roleLabel: string;
-  id?: number; // AMion internal ID
+  amionId: number;        // ID= from staff section (used for ROW decoding)
   pager?: string;
   cellPhone?: string;
   officePhone?: string;
   additionalContacts: { type: string; value: string }[];
 }
 
-// Schedule line from xln section with assignments
-export interface AmionScheduleLine {
-  name: string;
-  type: number;
-  startJulian: number;
-  numDays: number;
-  providerIds: number[]; // Provider ID for each day
-}
-
 export interface AmionService {
   name: string;
-  type: number;
-  typeLabel: string; // "schedule_line" | "vacation" | "service" | "unknown"
-  lins: number; // Number of lines/positions
+  id: number;              // ID= from xln section (used for ROW decoding)
+  shiftDisplay?: string;   // "7a-5p" display format
+  rawRowData?: string;     // Binary ROW data for decoding
+  rawSpidData?: string;    // Secondary provider ROW data (split shifts)
+  isGenericTitle?: boolean; // True if name is generic like "Consult Fellow"
+}
+
+export interface AmionAssignment {
+  serviceId: number;       // Service ID
+  serviceName: string;
+  providerId: number;      // Staff ID (decoded from ROW)
+  providerName: string;
+  date: string;            // "2025-12-01"
+  secondaryProviderId?: number;    // For split shifts
+  secondaryProviderName?: string;  // For split shifts
+  isGenericTitle?: boolean;        // True if provider name is generic
 }
 
 export interface AmionParseResult {
   department: string;
   organization: string;
   lastUpdated: string;
-  year: string;
-  baseYear: number; // Base year for Julian day calculations
   providers: AmionProvider[];
   services: string[];
-  serviceDetails: AmionService[];
-  scheduleLines: AmionScheduleLine[]; // Schedule lines with assignments
   skills: string[];
-  rotationsFound: string[]; // Unique rotation/service names for categorization
+  // Enhanced schedule data
+  amionServices: AmionService[];
+  assignments: AmionAssignment[];
+  staffIdMap: Map<number, AmionProvider>;
+  scheduleStartDate: string;
+  scheduleEndDate: string;
+  scheduleYear: number;
+  scheduleEndYear?: number;  // End year from YEAR field (e.g., 2026 from "YEAR=2024...2026")
 }
 
-// Schedule assignment from CSV import
-export interface ScheduleAssignmentRow {
-  providerName: string;
-  providerFirstName?: string;
-  providerLastName?: string;
-  date: string; // ISO date
-  rotation: string;
-  notes?: string;
+// ROW header parameters extracted from the ROW line
+interface RowHeaderParams {
+  startOffset: number;    // Reference point (often 1167)
+  count: number;          // Number of schedule entries
+  direction: number;      // -1 = reverse chronological, 1 = forward
+  increment: number;      // -7 = weekly blocks, -1 = daily
+  bytesPerEntry: number;  // Bytes per time slot
+  binaryData: string;     // The actual binary data between < and >
 }
 
 // AMion TYPE codes to role labels
@@ -68,29 +82,283 @@ const TYPE_TO_ROLE: Record<number, string> = {
 };
 
 // Map AMion roles to Strike Prep job type codes
-// These are the primary codes to try first
 export const AMION_TO_JOBTYPE: Record<string, string> = {
   "EP MD": "MD",
-  "Fellow": "FELLOW",
+  "Fellow": "FEL",
   "Attending": "MD",
   "NP": "NP",
   "PA": "PA",
 };
 
-// Alternative codes to try if the primary doesn't match
-export const JOBTYPE_ALTERNATIVES: Record<string, string[]> = {
-  "FELLOW": ["FEL", "FELL", "Fellow"],
-  "MD": ["ATT", "ATTENDING", "Attending", "PHYS"],
-  "NP": ["ARNP", "RNP"],
-  "PA": ["PA-C"],
+// AMion epoch: January 1, 2000
+const AMION_EPOCH = new Date(2000, 0, 1);
+
+// Special byte values in ROW data
+const SPECIAL_BYTES = {
+  EMPTY: 0,
+  EMPTY_SLOT: 250,    // 0xFA - empty slot marker
+  DISABLED: 255,      // 0xFF - disabled/not applicable
+  WEEK_MARKER_1: 252, // 0xFC - weekly override section marker
+  WEEK_MARKER_2: 7,   // 0x07 - paired with WEEK_MARKER_1
 };
 
-// Service TYPE codes
-const SERVICE_TYPE_LABELS: Record<number, string> = {
-  2: "service",      // Regular service/rotation
-  4: "vacation",     // Vacation/PTO type
-  15: "schedule_line", // Schedule line for assignments
-};
+// Generic title patterns that should be flagged
+const GENERIC_TITLE_PATTERNS = [
+  /fellow/i,
+  /consult/i,
+  /resident/i,
+  /on.?call/i,
+  /attending$/i,  // Just "Attending" alone
+  /^md$/i,
+  /coverage/i,
+  /backup/i,
+  /float/i,
+];
+
+/**
+ * Check if a name is a generic title (not a real person's name)
+ */
+function isGenericTitle(name: string): boolean {
+  if (!name) return false;
+  // If it contains a comma (like "BANDER, J."), it's likely a real name
+  if (name.includes(",")) return false;
+  // If it's just one or two words and matches a pattern, it's generic
+  return GENERIC_TITLE_PATTERNS.some(pattern => pattern.test(name));
+}
+
+/**
+ * Convert Julian day number to a Date object
+ * AMion uses epoch: January 1, 2000
+ */
+function julianDayToDate(jday: number): Date {
+  return new Date(AMION_EPOCH.getTime() + jday * 86400000);
+}
+
+/**
+ * Convert Date to Julian day number
+ */
+function dateToJulianDay(date: Date): number {
+  return Math.floor((date.getTime() - AMION_EPOCH.getTime()) / 86400000);
+}
+
+/**
+ * Parse ROW header parameters from a ROW line
+ * Format: ROW =1167 269 -1 -7 70 <binary_data>
+ */
+function parseRowHeader(rowLine: string): RowHeaderParams | null {
+  // Match: startOffset count direction increment bytesPerEntry <data>
+  const match = rowLine.match(/(\d+)\s+(\d+)\s+(-?\d+)\s+(-?\d+)\s+(\d+)\s*<([^>]*)>/);
+  if (!match) return null;
+
+  return {
+    startOffset: parseInt(match[1], 10),
+    count: parseInt(match[2], 10),
+    direction: parseInt(match[3], 10),
+    increment: parseInt(match[4], 10),
+    bytesPerEntry: parseInt(match[5], 10),
+    binaryData: match[6],
+  };
+}
+
+/**
+ * Extract byte values from binary string data
+ */
+function extractBytes(rawData: string): number[] {
+  const bytes: number[] = [];
+  for (let i = 0; i < rawData.length; i++) {
+    bytes.push(rawData.charCodeAt(i));
+  }
+  return bytes;
+}
+
+/**
+ * Decode Run-Length Encoded schedule data
+ * Format: [header1] [header2] [count1] [staffId1] [count2] [staffId2] ...
+ *
+ * Each (count, staffId) pair means "staffId is assigned for 'count' consecutive days"
+ */
+function decodeRLE(bytes: number[]): number[] {
+  const result: number[] = [];
+  let i = 2; // Skip 2-byte header
+
+  while (i < bytes.length - 1) {
+    const count = bytes[i];
+    const staffId = bytes[i + 1];
+
+    // Validate count - skip if 0 or unreasonably large
+    if (count === 0 || count > 50) {
+      i++;
+      continue;
+    }
+
+    // Check for weekly override marker (0xFC 0x07)
+    if (count === SPECIAL_BYTES.WEEK_MARKER_1 && staffId === SPECIAL_BYTES.WEEK_MARKER_2) {
+      // Skip override section: marker + ref + sep + 7 days
+      i += 11;
+      continue;
+    }
+
+    // Add staffId 'count' times
+    for (let j = 0; j < count; j++) {
+      result.push(staffId);
+    }
+
+    i += 2;
+  }
+
+  return result;
+}
+
+/**
+ * Calculate dates for decoded schedule entries
+ *
+ * The startOffset in ROW data is a reference point, but not a direct Julian day
+ * for the schedule dates. We need to calibrate using known metadata.
+ *
+ * Strategy: Use the YEAR field's end year to estimate the schedule's end date,
+ * then work backwards based on the number of decoded entries.
+ */
+function calculateDates(
+  startOffset: number,
+  decodedIds: number[],
+  direction: number,
+  scheduleEndYear?: number
+): Date[] {
+  const dates: Date[] = [];
+  const totalDays = decodedIds.length;
+
+  // Default to current year if no schedule year provided
+  const endYear = scheduleEndYear || new Date().getFullYear();
+
+  // Assume the schedule ends at December 31 of the end year
+  // (or use a reference date near "now" if schedule year matches current year)
+  let referenceDate: Date;
+  const currentYear = new Date().getFullYear();
+
+  if (endYear >= currentYear) {
+    // Schedule includes current/future year - use today as a rough endpoint
+    referenceDate = new Date();
+  } else {
+    // Schedule is historical - use end of that year
+    referenceDate = new Date(endYear, 11, 31);
+  }
+
+  // Calculate dates working backwards from reference
+  for (let i = 0; i < totalDays; i++) {
+    const date = new Date(referenceDate);
+    // Index 0 = oldest date (after reversing), so:
+    // date = referenceDate - (totalDays - 1 - i)
+    date.setDate(date.getDate() - (totalDays - 1 - i));
+    dates.push(date);
+  }
+
+  return dates;
+}
+
+/**
+ * Parse shift time from SHTM field
+ * Format: SHTM=startMinutes endMinutes duration
+ * e.g., SHTM=28 68 40 means 7am-5pm (28*15min = 420min = 7:00, 68*15min = 1020min = 17:00)
+ */
+function parseShiftTime(shtm: string): string | undefined {
+  const parts = shtm.split(' ').map(Number);
+  if (parts.length < 2) return undefined;
+
+  const startQuarters = parts[0];
+  const endQuarters = parts[1];
+
+  // Convert from quarter-hours to hours
+  const startHour = Math.floor(startQuarters / 4);
+  const endHour = Math.floor(endQuarters / 4);
+
+  // Format as "7a-5p" style
+  const formatHour = (h: number): string => {
+    if (h === 0) return "12a";
+    if (h < 12) return `${h}a`;
+    if (h === 12) return "12p";
+    return `${h - 12}p`;
+  };
+
+  return `${formatHour(startHour)}-${formatHour(endHour)}`;
+}
+
+/**
+ * Decode ROW binary data to extract daily assignments using proper RLE decoding
+ *
+ * ROW format: ROW =startOffset count direction increment bytesPerEntry <binary_data>
+ * Binary data uses RLE: [header1] [header2] [count1] [staffId1] [count2] [staffId2] ...
+ */
+function decodeROWData(
+  rowData: string,
+  spidData: string | undefined,
+  serviceId: number,
+  serviceName: string,
+  staffIdMap: Map<number, AmionProvider>,
+  scheduleEndYear?: number
+): AmionAssignment[] {
+  const assignments: AmionAssignment[] = [];
+
+  // Parse ROW header and binary data
+  const rowParams = parseRowHeader(rowData);
+  if (!rowParams) return assignments;
+
+  // Decode primary provider assignments
+  const primaryBytes = extractBytes(rowParams.binaryData);
+  let primaryIds = decodeRLE(primaryBytes);
+
+  // Decode secondary provider assignments (split shifts) if SPID exists
+  let secondaryIds: number[] = [];
+  if (spidData) {
+    const spidParams = parseRowHeader(spidData);
+    if (spidParams) {
+      const spidBytes = extractBytes(spidParams.binaryData);
+      secondaryIds = decodeRLE(spidBytes);
+    }
+  }
+
+  // Reverse if direction is -1 (data stored newest first)
+  if (rowParams.direction === -1) {
+    primaryIds = primaryIds.reverse();
+    if (secondaryIds.length > 0) {
+      secondaryIds = secondaryIds.reverse();
+    }
+  }
+
+  // Calculate dates based on schedule end year
+  const dates = calculateDates(rowParams.startOffset, primaryIds, rowParams.direction, scheduleEndYear);
+
+  // Create assignments for each day
+  for (let i = 0; i < primaryIds.length; i++) {
+    const primaryId = primaryIds[i];
+    const secondaryId = secondaryIds[i];
+    const date = dates[i];
+
+    // Skip empty assignments
+    if (primaryId === SPECIAL_BYTES.EMPTY || primaryId === SPECIAL_BYTES.EMPTY_SLOT) {
+      continue;
+    }
+
+    const primaryStaff = staffIdMap.get(primaryId);
+    const secondaryStaff = secondaryId ? staffIdMap.get(secondaryId) : undefined;
+
+    // Get provider name - could be from staff map or might be a generic title
+    const providerName = primaryStaff?.name || `Staff ID ${primaryId}`;
+    const secondaryName = secondaryStaff?.name;
+
+    assignments.push({
+      serviceId,
+      serviceName,
+      providerId: primaryId,
+      providerName,
+      date: date.toISOString().split('T')[0],
+      secondaryProviderId: secondaryId && secondaryId !== SPECIAL_BYTES.EMPTY ? secondaryId : undefined,
+      secondaryProviderName: secondaryName,
+      isGenericTitle: isGenericTitle(providerName) || isGenericTitle(serviceName),
+    });
+  }
+
+  return assignments;
+}
 
 /**
  * Parse an AMion .sch file content
@@ -102,71 +370,79 @@ export function parseAmionFile(content: string): AmionParseResult {
     department: "",
     organization: "",
     lastUpdated: "",
-    year: "",
-    baseYear: 2024,
     providers: [],
     services: [],
-    serviceDetails: [],
-    scheduleLines: [],
     skills: [],
-    rotationsFound: [],
+    amionServices: [],
+    assignments: [],
+    staffIdMap: new Map(),
+    scheduleStartDate: "",
+    scheduleEndDate: "",
+    scheduleYear: new Date().getFullYear(),
+    scheduleEndYear: undefined,
   };
 
   let currentSection = "";
   let currentProvider: Partial<AmionProvider> | null = null;
-  let currentServiceDetail: Partial<AmionService> | null = null;
-  let currentScheduleLine: Partial<AmionScheduleLine> | null = null;
+  let currentService: Partial<AmionService> | null = null;
   let currentSkill = "";
-
-  // Multi-line ROW data accumulation
-  let accumulatingRowData = false;
+  let scheduleJday = 0;
+  let collectingRowData = false;
+  let collectingSpidData = false;
   let rowDataBuffer = "";
+  let spidDataBuffer = "";
+  let currentShiftTime = "";
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
-
-    // Handle multi-line ROW data accumulation
-    if (accumulatingRowData && currentScheduleLine) {
-      // Check if this line contains the closing >
-      const closingIndex = line.indexOf('>');
-      if (closingIndex >= 0) {
-        // Add content up to the closing bracket
-        rowDataBuffer += line.substring(0, closingIndex);
-        accumulatingRowData = false;
-        // Decode the complete binary data (pass numDays for proper repeat/patch calculation)
-        currentScheduleLine.providerIds = decodeBinaryProviderIds(
-          rowDataBuffer,
-          currentScheduleLine.numDays || 777
-        );
-        rowDataBuffer = "";
-      } else {
-        // Continue accumulating
-        rowDataBuffer += line;
-      }
-      continue;
-    }
 
     // Section markers
     if (trimmed.startsWith("SECT=")) {
       // Save current provider if exists
       if (currentProvider && currentProvider.name) {
-        result.providers.push(finalizeProvider(currentProvider));
-      }
-      // Save current service detail if exists
-      if (currentServiceDetail && currentServiceDetail.name) {
-        result.serviceDetails.push(finalizeService(currentServiceDetail));
-        if (!result.rotationsFound.includes(currentServiceDetail.name)) {
-          result.rotationsFound.push(currentServiceDetail.name);
+        const provider = finalizeProvider(currentProvider);
+        result.providers.push(provider);
+        if (provider.amionId > 0) {
+          result.staffIdMap.set(provider.amionId, provider);
         }
       }
-      // Save current schedule line if exists
-      if (currentScheduleLine && currentScheduleLine.name) {
-        result.scheduleLines.push(finalizeScheduleLine(currentScheduleLine));
+      // Save current service if exists
+      if (currentService && currentService.name) {
+        result.amionServices.push(currentService as AmionService);
       }
       currentProvider = null;
-      currentServiceDetail = null;
-      currentScheduleLine = null;
+      currentService = null;
+      collectingRowData = false;
       currentSection = trimmed.substring(5);
+      continue;
+    }
+
+    // Handle multi-line ROW data collection
+    if (collectingRowData) {
+      rowDataBuffer += line;
+      if (line.includes('>')) {
+        collectingRowData = false;
+        // Finalize the service with ROW data
+        if (currentService) {
+          currentService.rawRowData = rowDataBuffer;
+        }
+        rowDataBuffer = "";
+      }
+      continue;
+    }
+
+    // Handle multi-line SPID data collection
+    if (collectingSpidData) {
+      spidDataBuffer += line;
+      if (line.includes('>')) {
+        collectingSpidData = false;
+        // Finalize the service with SPID data
+        if (currentService) {
+          currentService.rawSpidData = spidDataBuffer;
+        }
+        spidDataBuffer = "";
+      }
       continue;
     }
 
@@ -184,11 +460,30 @@ export function parseAmionFile(content: string): AmionParseResult {
       continue;
     }
     if (trimmed.startsWith("YEAR=")) {
-      result.year = trimmed.substring(5);
-      // Parse base year from "YEAR=2024 1 8 :2024 2026" format
-      const yearMatch = trimmed.match(/YEAR=(\d{4})/);
+      // Format: YEAR=2024 1 8 :2024 2026
+      // First number is base year, last number after colon is end year
+      const yearMatch = trimmed.match(/YEAR=(\d+).*:(\d+)\s+(\d+)/);
       if (yearMatch) {
-        result.baseYear = parseInt(yearMatch[1], 10);
+        result.scheduleYear = parseInt(yearMatch[1], 10);
+        // The end year is the last number in the sequence
+        const endYear = parseInt(yearMatch[3], 10);
+        if (endYear > result.scheduleYear) {
+          result.scheduleEndYear = endYear;
+        }
+      } else {
+        // Fallback to simple match
+        const simpleMatch = trimmed.match(/YEAR=(\d+)/);
+        if (simpleMatch) {
+          result.scheduleYear = parseInt(simpleMatch[1], 10);
+        }
+      }
+      continue;
+    }
+    if (trimmed.startsWith("JDAY=")) {
+      scheduleJday = parseInt(trimmed.substring(5), 10);
+      if (scheduleJday > 0) {
+        const startDate = julianDayToDate(scheduleJday);
+        result.scheduleStartDate = startDate.toISOString().split('T')[0];
       }
       continue;
     }
@@ -198,11 +493,16 @@ export function parseAmionFile(content: string): AmionParseResult {
       if (trimmed.startsWith("NAME=")) {
         // Save previous provider
         if (currentProvider && currentProvider.name) {
-          result.providers.push(finalizeProvider(currentProvider));
+          const provider = finalizeProvider(currentProvider);
+          result.providers.push(provider);
+          if (provider.amionId > 0) {
+            result.staffIdMap.set(provider.amionId, provider);
+          }
         }
         currentProvider = {
           name: trimmed.substring(5),
           additionalContacts: [],
+          amionId: 0,
         };
       } else if (currentProvider) {
         if (trimmed.startsWith("ABBR=")) {
@@ -211,7 +511,8 @@ export function parseAmionFile(content: string): AmionParseResult {
           currentProvider.type = parseInt(trimmed.substring(5), 10);
           currentProvider.roleLabel = TYPE_TO_ROLE[currentProvider.type] || "Unknown";
         } else if (trimmed.startsWith("ID  =")) {
-          currentProvider.id = parseInt(trimmed.substring(5), 10);
+          // Staff ID for ROW decoding
+          currentProvider.amionId = parseInt(trimmed.substring(5), 10);
         } else if (trimmed.startsWith("PAGR=")) {
           const pager = trimmed.substring(5);
           // Check if it looks like a cell phone (10+ digits)
@@ -247,74 +548,53 @@ export function parseAmionFile(content: string): AmionParseResult {
       }
     }
 
-    // Service section parsing (SECT=service contains service definitions)
+    // Service section parsing (for basic service list)
     if (currentSection === "service") {
       if (trimmed.startsWith("NAME=")) {
-        // Save previous service
-        if (currentServiceDetail && currentServiceDetail.name) {
-          result.serviceDetails.push(finalizeService(currentServiceDetail));
-          if (!result.rotationsFound.includes(currentServiceDetail.name)) {
-            result.rotationsFound.push(currentServiceDetail.name);
-          }
-        }
-        currentServiceDetail = {
-          name: trimmed.substring(5),
-          lins: 1,
-        };
-      } else if (currentServiceDetail) {
-        if (trimmed.startsWith("TYPE=")) {
-          currentServiceDetail.type = parseInt(trimmed.substring(5), 10);
-          currentServiceDetail.typeLabel = SERVICE_TYPE_LABELS[currentServiceDetail.type] || "unknown";
-        } else if (trimmed.startsWith("LINS=")) {
-          currentServiceDetail.lins = parseInt(trimmed.substring(5), 10);
+        const serviceName = trimmed.substring(5);
+        if (serviceName && !result.services.includes(serviceName)) {
+          result.services.push(serviceName);
         }
       }
     }
 
-    // Schedule line section parsing (xln = actual schedule lines with assignments)
+    // XLN section parsing (extended schedule lines with ROW data)
     if (currentSection === "xln") {
       if (trimmed.startsWith("NAME=")) {
-        // Save previous schedule line
-        if (currentScheduleLine && currentScheduleLine.name) {
-          result.scheduleLines.push(finalizeScheduleLine(currentScheduleLine));
+        // Save previous service
+        if (currentService && currentService.name) {
+          result.amionServices.push(currentService as AmionService);
         }
         const serviceName = trimmed.substring(5);
-        currentScheduleLine = {
+        currentService = {
           name: serviceName,
-          providerIds: [],
+          id: 0,
+          isGenericTitle: isGenericTitle(serviceName),
         };
-        if (serviceName && !result.services.includes(serviceName)) {
-          result.services.push(serviceName);
-        }
-        if (serviceName && !result.rotationsFound.includes(serviceName)) {
-          result.rotationsFound.push(serviceName);
-        }
-      } else if (currentScheduleLine) {
-        if (trimmed.startsWith("TYPE=")) {
-          currentScheduleLine.type = parseInt(trimmed.substring(5), 10);
+        currentShiftTime = "";
+      } else if (currentService) {
+        if (trimmed.startsWith("ID  =")) {
+          currentService.id = parseInt(trimmed.substring(5), 10);
+        } else if (trimmed.startsWith("SHTM=")) {
+          currentShiftTime = trimmed.substring(5);
+          currentService.shiftDisplay = parseShiftTime(currentShiftTime);
         } else if (trimmed.startsWith("ROW =")) {
-          // Parse ROW header: "ROW =1167 777 -1 -7 66 <..."
-          const rowMatch = trimmed.match(/ROW =(\d+)\s+(\d+)/);
-          if (rowMatch) {
-            currentScheduleLine.startJulian = parseInt(rowMatch[1], 10);
-            currentScheduleLine.numDays = parseInt(rowMatch[2], 10);
+          // ROW data might span multiple lines
+          rowDataBuffer = trimmed.substring(5);
+          if (!trimmed.includes('>')) {
+            collectingRowData = true;
+          } else {
+            currentService.rawRowData = rowDataBuffer;
+            rowDataBuffer = "";
           }
-          // Check if ROW data contains < to start multi-line accumulation
-          const openIndex = line.indexOf('<');
-          if (openIndex >= 0) {
-            const closeIndex = line.indexOf('>', openIndex);
-            if (closeIndex >= 0) {
-              // Data is on single line
-              const binaryData = line.substring(openIndex + 1, closeIndex);
-              currentScheduleLine.providerIds = decodeBinaryProviderIds(
-                binaryData,
-                currentScheduleLine.numDays || 777
-              );
-            } else {
-              // Multi-line data - start accumulating
-              accumulatingRowData = true;
-              rowDataBuffer = line.substring(openIndex + 1);
-            }
+        } else if (trimmed.startsWith("SPID=")) {
+          // SPID data for secondary provider (split shifts)
+          spidDataBuffer = trimmed.substring(5);
+          if (!trimmed.includes('>')) {
+            collectingSpidData = true;
+          } else {
+            currentService.rawSpidData = spidDataBuffer;
+            spidDataBuffer = "";
           }
         }
       }
@@ -331,137 +611,44 @@ export function parseAmionFile(content: string): AmionParseResult {
     }
   }
 
-  // Don't forget last provider
+  // Don't forget last provider/service
   if (currentProvider && currentProvider.name) {
-    result.providers.push(finalizeProvider(currentProvider));
+    const provider = finalizeProvider(currentProvider);
+    result.providers.push(provider);
+    if (provider.amionId > 0) {
+      result.staffIdMap.set(provider.amionId, provider);
+    }
+  }
+  if (currentService && currentService.name) {
+    result.amionServices.push(currentService as AmionService);
   }
 
-  // Don't forget last service detail
-  if (currentServiceDetail && currentServiceDetail.name) {
-    result.serviceDetails.push(finalizeService(currentServiceDetail));
-    if (!result.rotationsFound.includes(currentServiceDetail.name)) {
-      result.rotationsFound.push(currentServiceDetail.name);
+  // Decode ROW data for all services to get assignments
+  // Note: We decode regardless of scheduleStartDate since dates come from ROW header
+  if (result.staffIdMap.size > 0) {
+    for (const service of result.amionServices) {
+      if (service.rawRowData) {
+        const serviceAssignments = decodeROWData(
+          service.rawRowData,
+          service.rawSpidData,
+          service.id,
+          service.name,
+          result.staffIdMap,
+          result.scheduleEndYear || result.scheduleYear
+        );
+        result.assignments.push(...serviceAssignments);
+      }
     }
   }
 
-  // Don't forget last schedule line
-  if (currentScheduleLine && currentScheduleLine.name) {
-    result.scheduleLines.push(finalizeScheduleLine(currentScheduleLine));
+  // Calculate schedule date range from assignments
+  if (result.assignments.length > 0) {
+    const dates = result.assignments.map(a => a.date).sort();
+    result.scheduleStartDate = dates[0];
+    result.scheduleEndDate = dates[dates.length - 1];
   }
 
   return result;
-}
-
-/**
- * Finalize a service record
- */
-function finalizeService(partial: Partial<AmionService>): AmionService {
-  return {
-    name: partial.name || "",
-    type: partial.type || 0,
-    typeLabel: partial.typeLabel || "unknown",
-    lins: partial.lins || 1,
-  };
-}
-
-/**
- * Finalize a schedule line record
- */
-function finalizeScheduleLine(partial: Partial<AmionScheduleLine>): AmionScheduleLine {
-  return {
-    name: partial.name || "",
-    type: partial.type || 0,
-    startJulian: partial.startJulian || 0,
-    numDays: partial.numDays || 0,
-    providerIds: partial.providerIds || [],
-  };
-}
-
-/**
- * Decode binary provider IDs from ROW data
- *
- * AMion binary format (discovered through reverse engineering):
- * 1. Section 0 (before first 252 byte): RLE encoded base pattern
- *    - Pairs of (provider_id, count) where count is 1-7 days
- * 2. Patch sections (after each 252 marker):
- *    - Format: 252, <type>, <week_offset>, 0, <provider_ids...>
- *    - Apply at (week_offset + 31) * 7 days
- *    - Provider ID 0 means "inherit from base pattern"
- */
-function decodeBinaryProviderIds(data: string, numDays: number = 777): number[] {
-  // Read bytes as raw character codes (Latin-1)
-  const bytes: number[] = [];
-  for (let i = 0; i < data.length; i++) {
-    const charCode = data.charCodeAt(i);
-    if (charCode === 65533) {
-      bytes.push(255); // Unicode replacement character fallback
-    } else if (charCode < 256) {
-      bytes.push(charCode);
-    }
-  }
-
-  if (bytes.length === 0) return [];
-
-  // Find all 252 markers (section delimiters)
-  const pos252 = bytes.map((b, i) => b === 252 ? i : -1).filter(i => i >= 0);
-  const section0End = pos252.length > 0 ? pos252[0] : bytes.length;
-
-  // Step 1: Decode Section 0 as RLE to get base pattern
-  const baseSchedule: number[] = [];
-  for (let i = 0; i < section0End - 1; i += 2) {
-    const providerId = bytes[i];
-    const count = bytes[i + 1];
-    if (count >= 1 && count <= 7) {
-      for (let c = 0; c < count; c++) {
-        baseSchedule.push(providerId);
-      }
-    }
-  }
-
-  // Handle edge case: if no base schedule decoded, fall back to simple decode
-  if (baseSchedule.length === 0) {
-    // Fallback: treat all bytes as provider IDs
-    return bytes.filter(b => b !== 252 && b !== 0);
-  }
-
-  // Step 2: Build full schedule by repeating base pattern
-  const schedule: number[] = [];
-  for (let d = 0; d < numDays; d++) {
-    schedule.push(baseSchedule[d % baseSchedule.length]);
-  }
-
-  // Step 3: Apply patches with +31 week adjustment
-  // Patch format: 252, type, week_offset, 0, provider_ids...
-  for (let p = 0; p < pos252.length; p++) {
-    const blockStart = pos252[p];
-    const blockEnd = p + 1 < pos252.length ? pos252[p + 1] : bytes.length;
-
-    if (blockStart + 3 >= bytes.length) continue;
-
-    const weekOffset = bytes[blockStart + 2];
-    const separator = bytes[blockStart + 3];
-
-    // Skip malformed patches (separator should be 0)
-    if (separator !== 0) continue;
-
-    const providers = bytes.slice(blockStart + 4, blockEnd);
-
-    // Apply +31 week offset adjustment
-    const adjustedWeek = weekOffset + 31;
-    const startDay = adjustedWeek * 7;
-
-    if (startDay >= numDays) continue;
-
-    // Apply patch - 0 means inherit from base (don't overwrite)
-    for (let d = 0; d < providers.length && startDay + d < schedule.length; d++) {
-      const pid = providers[d];
-      if (pid !== 0) {
-        schedule[startDay + d] = pid;
-      }
-    }
-  }
-
-  return schedule;
 }
 
 /**
@@ -477,67 +664,12 @@ function finalizeProvider(partial: Partial<AmionProvider>): AmionProvider {
     abbreviation: partial.abbreviation || "",
     type: partial.type || 0,
     roleLabel: partial.roleLabel || "Unknown",
-    id: partial.id,
+    amionId: partial.amionId || 0,
     pager: partial.pager,
     cellPhone: partial.cellPhone,
     officePhone: partial.officePhone,
     additionalContacts: partial.additionalContacts || [],
   };
-}
-
-/**
- * Convert AMion Julian day to ISO date string
- * AMion uses Julian days calculated from an epoch 3 years before the base year
- * E.g., if YEAR=2024, Julian day 0 = Jan 1, 2021
- */
-function julianToDate(julianDay: number, baseYear: number): string {
-  // AMion epoch is 3 years before the stated base year
-  const epochYear = baseYear - 3;
-  const baseDate = new Date(epochYear, 0, 1); // Jan 1 of epoch year
-  baseDate.setDate(baseDate.getDate() + julianDay);
-  return baseDate.toISOString().split('T')[0];
-}
-
-/**
- * Generate schedule assignments from parsed AMion data
- * This converts the binary schedule data into usable assignment rows
- */
-export function generateScheduleAssignments(result: AmionParseResult): ScheduleAssignmentRow[] {
-  const assignments: ScheduleAssignmentRow[] = [];
-
-  // Build provider ID to name map
-  const providerById = new Map<number, AmionProvider>();
-  for (const provider of result.providers) {
-    if (provider.id !== undefined) {
-      providerById.set(provider.id, provider);
-    }
-  }
-
-  // Process each schedule line
-  for (const line of result.scheduleLines) {
-    if (!line.providerIds || line.providerIds.length === 0) continue;
-
-    // Each provider ID in the array corresponds to a day
-    for (let dayOffset = 0; dayOffset < line.providerIds.length; dayOffset++) {
-      const providerId = line.providerIds[dayOffset];
-      if (providerId === 0 || providerId === 32) continue; // 0 = null, 32 = space (no assignment)
-
-      const provider = providerById.get(providerId);
-      if (!provider) continue;
-
-      const date = julianToDate(line.startJulian + dayOffset, result.baseYear);
-
-      assignments.push({
-        providerName: provider.name,
-        providerFirstName: provider.firstName,
-        providerLastName: provider.lastName,
-        date,
-        rotation: line.name,
-      });
-    }
-  }
-
-  return assignments;
 }
 
 /**
@@ -638,6 +770,8 @@ export function getParseStats(result: AmionParseResult): {
   byRole: Record<string, number>;
   withCellPhone: number;
   withPager: number;
+  servicesCount: number;
+  assignmentsCount: number;
 } {
   const valid = filterValidProviders(result.providers);
   const byRole: Record<string, number> = {};
@@ -652,230 +786,62 @@ export function getParseStats(result: AmionParseResult): {
     byRole,
     withCellPhone: valid.filter(p => p.cellPhone).length,
     withPager: valid.filter(p => p.pager).length,
+    servicesCount: result.amionServices.length,
+    assignmentsCount: result.assignments.length,
   };
 }
 
 /**
- * Parse CSV content for schedule assignments
- * Expected columns: Provider Name, Date, Rotation, Notes (optional)
- * Or: First Name, Last Name, Date, Rotation, Notes (optional)
+ * Get assignments grouped by service (for grid display)
  */
-export function parseScheduleCSV(content: string): {
-  assignments: ScheduleAssignmentRow[];
-  errors: string[];
-  rotationsFound: string[];
-} {
-  const lines = content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  const assignments: ScheduleAssignmentRow[] = [];
-  const errors: string[] = [];
-  const rotationsFound = new Set<string>();
+export function getAssignmentsByService(
+  result: AmionParseResult
+): Map<string, AmionAssignment[]> {
+  const byService = new Map<string, AmionAssignment[]>();
 
-  if (lines.length < 2) {
-    errors.push("CSV must have a header row and at least one data row");
-    return { assignments, errors, rotationsFound: [] };
+  for (const assignment of result.assignments) {
+    const existing = byService.get(assignment.serviceName) || [];
+    existing.push(assignment);
+    byService.set(assignment.serviceName, existing);
   }
 
-  // Parse header
-  const headerLine = lines[0];
-  const headers = parseCSVLine(headerLine).map(h => h.toLowerCase().trim());
-
-  // Detect column indices
-  const providerNameIdx = headers.findIndex(h => h.includes("provider") && h.includes("name"));
-  const firstNameIdx = headers.findIndex(h => h === "first name" || h === "firstname");
-  const lastNameIdx = headers.findIndex(h => h === "last name" || h === "lastname");
-  const dateIdx = headers.findIndex(h => h === "date" || h.includes("date"));
-  const rotationIdx = headers.findIndex(h => h === "rotation" || h === "service" || h.includes("rotation"));
-  const notesIdx = headers.findIndex(h => h === "notes" || h === "note" || h === "comments");
-
-  // Validate required columns
-  const hasProviderName = providerNameIdx >= 0 || (firstNameIdx >= 0 && lastNameIdx >= 0);
-  if (!hasProviderName) {
-    errors.push("CSV must have either 'Provider Name' column or 'First Name' and 'Last Name' columns");
-  }
-  if (dateIdx < 0) {
-    errors.push("CSV must have a 'Date' column");
-  }
-  if (rotationIdx < 0) {
-    errors.push("CSV must have a 'Rotation' or 'Service' column");
-  }
-
-  if (errors.length > 0) {
-    return { assignments, errors, rotationsFound: [] };
-  }
-
-  // Parse data rows
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim()) continue;
-
-    try {
-      const values = parseCSVLine(line);
-
-      // Extract values
-      let providerName = "";
-      let firstName = "";
-      let lastName = "";
-
-      if (providerNameIdx >= 0) {
-        providerName = values[providerNameIdx]?.trim() || "";
-        const parsed = parseName(providerName);
-        firstName = parsed.firstName;
-        lastName = parsed.lastName;
-      } else {
-        firstName = values[firstNameIdx]?.trim() || "";
-        lastName = values[lastNameIdx]?.trim() || "";
-        providerName = `${firstName} ${lastName}`.trim();
-      }
-
-      const dateStr = values[dateIdx]?.trim() || "";
-      const rotation = values[rotationIdx]?.trim() || "";
-      const notes = notesIdx >= 0 ? values[notesIdx]?.trim() : undefined;
-
-      // Validate row
-      if (!providerName && !firstName && !lastName) {
-        errors.push(`Row ${i + 1}: Missing provider name`);
-        continue;
-      }
-      if (!dateStr) {
-        errors.push(`Row ${i + 1}: Missing date`);
-        continue;
-      }
-      if (!rotation) {
-        errors.push(`Row ${i + 1}: Missing rotation`);
-        continue;
-      }
-
-      // Parse date (handle various formats)
-      const parsedDate = parseDate(dateStr);
-      if (!parsedDate) {
-        errors.push(`Row ${i + 1}: Invalid date format "${dateStr}"`);
-        continue;
-      }
-
-      rotationsFound.add(rotation);
-
-      assignments.push({
-        providerName,
-        providerFirstName: firstName,
-        providerLastName: lastName,
-        date: parsedDate,
-        rotation,
-        notes,
-      });
-    } catch (e) {
-      errors.push(`Row ${i + 1}: Parse error - ${e instanceof Error ? e.message : "Unknown error"}`);
-    }
-  }
-
-  return {
-    assignments,
-    errors,
-    rotationsFound: Array.from(rotationsFound),
-  };
+  return byService;
 }
 
 /**
- * Parse a single CSV line handling quoted values
+ * Get assignments grouped by date (for calendar display)
  */
-function parseCSVLine(line: string): string[] {
-  const result: string[] = [];
-  let current = "";
-  let inQuotes = false;
+export function getAssignmentsByDate(
+  result: AmionParseResult
+): Map<string, AmionAssignment[]> {
+  const byDate = new Map<string, AmionAssignment[]>();
 
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-
-    if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        // Escaped quote
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === ',' && !inQuotes) {
-      result.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
+  for (const assignment of result.assignments) {
+    const existing = byDate.get(assignment.date) || [];
+    existing.push(assignment);
+    byDate.set(assignment.date, existing);
   }
 
-  result.push(current);
-  return result;
+  return byDate;
 }
 
 /**
- * Parse a date string into ISO format (YYYY-MM-DD)
- * Handles: MM/DD/YYYY, MM-DD-YYYY, YYYY-MM-DD, MM/DD/YY
+ * Get all assignments for a specific provider
  */
-function parseDate(dateStr: string): string | null {
-  if (!dateStr) return null;
-
-  // Already ISO format
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return dateStr;
-  }
-
-  // MM/DD/YYYY or MM-DD-YYYY
-  const usMatch = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (usMatch) {
-    const month = usMatch[1].padStart(2, '0');
-    const day = usMatch[2].padStart(2, '0');
-    const year = usMatch[3];
-    return `${year}-${month}-${day}`;
-  }
-
-  // MM/DD/YY
-  const shortMatch = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
-  if (shortMatch) {
-    const month = shortMatch[1].padStart(2, '0');
-    const day = shortMatch[2].padStart(2, '0');
-    const yearShort = parseInt(shortMatch[3], 10);
-    const year = yearShort >= 50 ? `19${shortMatch[3]}` : `20${shortMatch[3]}`;
-    return `${year}-${month}-${day}`;
-  }
-
-  return null;
+export function getProviderAssignments(
+  result: AmionParseResult,
+  providerId: number
+): AmionAssignment[] {
+  return result.assignments.filter(a => a.providerId === providerId);
 }
 
 /**
- * Generate date range array
+ * Get unique dates in the schedule
  */
-export function generateDateRange(startDate: string, endDate: string): string[] {
-  const dates: string[] = [];
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    dates.push(d.toISOString().split('T')[0]);
+export function getScheduleDates(result: AmionParseResult): string[] {
+  const dates = new Set<string>();
+  for (const assignment of result.assignments) {
+    dates.add(assignment.date);
   }
-
-  return dates;
-}
-
-/**
- * Categorize rotation name to a status
- */
-export function categorizeRotation(rotationName: string): string {
-  const lower = rotationName.toLowerCase();
-
-  // Vacation/PTO
-  if (lower.includes('vac') || lower.includes('pto') || lower.includes('holiday')) {
-    return 'vacation';
-  }
-
-  // Sick
-  if (lower.includes('sick') || lower.includes('illness')) {
-    return 'sick';
-  }
-
-  // Curtailable
-  if (lower.includes('research') || lower.includes('elective') || lower.includes('admin') ||
-      lower.includes('education') || lower.includes('cme') || lower.includes('conference')) {
-    return 'curtailable';
-  }
-
-  // Default to on_service
-  return 'on_service';
+  return Array.from(dates).sort();
 }

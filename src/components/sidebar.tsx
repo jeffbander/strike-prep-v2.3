@@ -15,6 +15,7 @@ import {
   ArrowLeftRight,
   ClipboardList,
   LogOut,
+  CalendarDays,
 } from "lucide-react"
 import { SignOutButton } from "@clerk/nextjs"
 
@@ -23,6 +24,7 @@ const navigation = [
   { name: "Scenarios", href: "/dashboard/scenarios", icon: AlertTriangle },
   { name: "Providers", href: "/dashboard/providers", icon: Users },
   { name: "Services", href: "/dashboard/services", icon: Calendar },
+  { name: "Amion Schedule", href: "/dashboard/amion", icon: CalendarDays },
   { name: "Hospitals", href: "/dashboard/hospitals", icon: Building2 },
   { name: "Coverage", href: "/dashboard/coverage", icon: ClipboardList },
 ]
