@@ -572,4 +572,218 @@ export default defineSchema({
     .index("by_scenario", ["scenarioId"])
     .index("by_provider", ["providerId"])
     .index("by_scenario_provider", ["scenarioId", "providerId"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ROTATION TYPES
+  // Admin-configurable categories for AMion schedule rotations
+  // ═══════════════════════════════════════════════════════════════════
+
+  rotation_types: defineTable({
+    healthSystemId: v.id("health_systems"),
+    name: v.string(), // "Vac", "Sick", "Elective", "Research", "On Call"
+    shortCode: v.string(), // "VAC", "SICK", "ELEC"
+
+    // Status categorization
+    // "vacation" | "sick" | "on_service" | "curtailable" | "administrative"
+    category: v.string(),
+    isCurtailable: v.boolean(), // If true, provider can be pulled for strike coverage
+
+    // Display settings
+    color: v.string(), // Hex color for grid display (e.g., "#EF4444")
+
+    isActive: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_health_system", ["healthSystemId"])
+    .index("by_name", ["healthSystemId", "name"])
+    .index("by_category", ["healthSystemId", "category"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // AMION SCHEDULE IMPORTS
+  // Metadata about each AMion .sch file import
+  // ═══════════════════════════════════════════════════════════════════
+
+  amion_schedule_imports: defineTable({
+    departmentId: v.id("departments"),
+    hospitalId: v.id("hospitals"),
+    healthSystemId: v.id("health_systems"),
+
+    fileName: v.string(),
+    amionDepartment: v.optional(v.string()), // From AMion DEPT= field
+
+    // Date range covered by this import
+    startDate: v.string(), // ISO date
+    endDate: v.string(),
+
+    // Import statistics
+    providersProcessed: v.number(),
+    assignmentsCreated: v.number(),
+    errors: v.optional(v.array(v.string())),
+
+    importedAt: v.number(),
+    importedBy: v.id("users"),
+
+    isActive: v.boolean(),
+  })
+    .index("by_department", ["departmentId"])
+    .index("by_hospital", ["hospitalId"])
+    .index("by_health_system", ["healthSystemId"])
+    .index("by_imported_at", ["importedAt"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // SCHEDULE ASSIGNMENTS
+  // Provider schedule entries parsed from AMion
+  // ═══════════════════════════════════════════════════════════════════
+
+  schedule_assignments: defineTable({
+    importId: v.id("amion_schedule_imports"),
+    providerId: v.id("providers"),
+
+    date: v.string(), // ISO date "2025-01-15"
+
+    // Rotation/Service info
+    rotationTypeId: v.optional(v.id("rotation_types")), // Matched to known type
+    rotationName: v.string(), // Raw rotation name from AMion (e.g., "MSW CONSULT ATTENDING", "Vac")
+
+    // Computed status derived from rotation type
+    // "available" | "on_service" | "vacation" | "curtailable" | "unavailable"
+    status: v.string(),
+
+    // Source tracking
+    source: v.string(), // "amion_import" | "manual"
+    notes: v.optional(v.string()),
+
+    isActive: v.boolean(),
+  })
+    .index("by_import", ["importId"])
+    .index("by_provider", ["providerId"])
+    .index("by_provider_date", ["providerId", "date"])
+    .index("by_date", ["date"])
+    .index("by_status", ["status"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CENSUS IMPORTS
+  // Metadata for each census Excel/CSV file upload
+  // ═══════════════════════════════════════════════════════════════════
+
+  census_imports: defineTable({
+    hospitalId: v.id("hospitals"),
+    healthSystemId: v.id("health_systems"),
+
+    fileName: v.string(),
+    uploadDate: v.string(), // ISO date of the census data (e.g., "2026-01-06")
+
+    // Statistics
+    patientsProcessed: v.number(),
+    predictionsGenerated: v.number(),
+    errors: v.optional(v.array(v.string())),
+
+    // Processing status
+    status: v.string(), // "pending" | "processing" | "completed" | "failed"
+
+    importedAt: v.number(),
+    importedBy: v.id("users"),
+
+    isActive: v.boolean(),
+  })
+    .index("by_hospital", ["hospitalId"])
+    .index("by_health_system", ["healthSystemId"])
+    .index("by_upload_date", ["uploadDate"])
+    .index("by_status", ["status"])
+    .index("by_imported_at", ["importedAt"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CENSUS PATIENTS
+  // Individual patient records (PHI-minimized: initials + MRN only)
+  // MRN is unique key for upsert - patients can move between units
+  // ═══════════════════════════════════════════════════════════════════
+
+  census_patients: defineTable({
+    hospitalId: v.id("hospitals"),
+    importId: v.id("census_imports"),
+
+    // Identification (PHI-minimized)
+    mrn: v.string(), // Medical Record Number - unique key
+    initials: v.string(), // "JB" for "Johnson, Bob" - derived from full name
+
+    // Location & Dates
+    service: v.optional(v.string()), // ICU only: CSIU, CCU, CVU, CICU
+    currentUnitName: v.string(), // Sheet name: "MSH - CSIU", "MSH-N07E"
+    unitType: v.string(), // "icu" | "floor"
+    admissionDate: v.string(), // YYYY-MM-DD
+    censusDate: v.string(), // Date of this census record
+    losDays: v.optional(v.number()), // Floor only: current length of stay
+
+    // AI-Generated Fields (from Claude)
+    primaryDiagnosis: v.optional(v.string()), // 2-5 sentence narrative
+    clinicalStatus: v.optional(v.string()), // Pipe-separated status
+    dispositionConsiderations: v.optional(v.string()), // Trajectory, barriers, timeline
+    projectedDischargeDays: v.optional(v.number()), // Integer: days until discharge
+
+    // Additional tracking
+    attendingDoctor: v.optional(v.string()),
+
+    // Retention (3-day rolling window)
+    expiresAt: v.number(), // Timestamp for cleanup (now + 3 days)
+
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_hospital", ["hospitalId"])
+    .index("by_import", ["importId"])
+    .index("by_mrn", ["hospitalId", "mrn"]) // For upsert lookup
+    .index("by_unit", ["hospitalId", "currentUnitName"])
+    .index("by_census_date", ["hospitalId", "censusDate"])
+    .index("by_unit_type", ["hospitalId", "unitType"])
+    .index("by_expires_at", ["expiresAt"]), // For cleanup job
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CENSUS PATIENT HISTORY
+  // Tracks unit transfers over time (ICU → Floor, etc.)
+  // ═══════════════════════════════════════════════════════════════════
+
+  census_patient_history: defineTable({
+    patientId: v.id("census_patients"),
+    hospitalId: v.id("hospitals"),
+    mrn: v.string(),
+
+    // Movement
+    fromUnitName: v.optional(v.string()), // null for initial admission
+    toUnitName: v.string(),
+    transferDate: v.string(), // ISO date
+
+    // Clinical summary at time of transfer (optional)
+    clinicalSummary: v.optional(v.string()),
+
+    createdAt: v.number(),
+    expiresAt: v.number(), // 3-day retention
+  })
+    .index("by_patient", ["patientId"])
+    .index("by_hospital", ["hospitalId"])
+    .index("by_mrn", ["hospitalId", "mrn"])
+    .index("by_date", ["transferDate"])
+    .index("by_expires_at", ["expiresAt"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CENSUS UNIT MAPPINGS
+  // Maps raw unit names from Excel sheets to system units
+  // Also classifies unit type (ICU vs Floor)
+  // ═══════════════════════════════════════════════════════════════════
+
+  census_unit_mappings: defineTable({
+    hospitalId: v.id("hospitals"),
+    rawUnitName: v.string(), // "MSH - CSIU", "MSH-N07E"
+    unitId: v.optional(v.id("units")), // Matched unit in units table (optional)
+
+    // Unit classification for prompt selection
+    unitType: v.string(), // "icu" | "floor"
+    isICU: v.boolean(),
+
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_hospital", ["hospitalId"])
+    .index("by_raw_name", ["hospitalId", "rawUnitName"]),
 });

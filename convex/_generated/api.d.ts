@@ -8,8 +8,13 @@
  * @module
  */
 
+import type * as amionSchedules from "../amionSchedules.js";
 import type * as auditLogs from "../auditLogs.js";
+import type * as census from "../census.js";
+import type * as censusAI from "../censusAI.js";
+import type * as censusCleanup from "../censusCleanup.js";
 import type * as claimTokens from "../claimTokens.js";
+import type * as crons from "../crons.js";
 import type * as departments from "../departments.js";
 import type * as email from "../email.js";
 import type * as emailInternal from "../emailInternal.js";
@@ -26,6 +31,7 @@ import type * as lib_validation from "../lib/validation.js";
 import type * as matching from "../matching.js";
 import type * as providerAvailability from "../providerAvailability.js";
 import type * as providers from "../providers.js";
+import type * as rotationTypes from "../rotationTypes.js";
 import type * as scenarioMatching from "../scenarioMatching.js";
 import type * as scenarios from "../scenarios.js";
 import type * as seed from "../seed.js";
@@ -43,8 +49,13 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  amionSchedules: typeof amionSchedules;
   auditLogs: typeof auditLogs;
+  census: typeof census;
+  censusAI: typeof censusAI;
+  censusCleanup: typeof censusCleanup;
   claimTokens: typeof claimTokens;
+  crons: typeof crons;
   departments: typeof departments;
   email: typeof email;
   emailInternal: typeof emailInternal;
@@ -61,6 +72,7 @@ declare const fullApi: ApiFromModules<{
   matching: typeof matching;
   providerAvailability: typeof providerAvailability;
   providers: typeof providers;
+  rotationTypes: typeof rotationTypes;
   scenarioMatching: typeof scenarioMatching;
   scenarios: typeof scenarios;
   seed: typeof seed;
