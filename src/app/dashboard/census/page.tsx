@@ -364,6 +364,9 @@ export default function CensusPage() {
                       <th className="px-4 py-3 text-left text-xs font-medium text-slate-300 uppercase">
                         Clinical Status
                       </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-300 uppercase">
+                        Pending Procedures
+                      </th>
                       <th className="px-4 py-3 text-right text-xs font-medium text-slate-300 uppercase">
                         Projected Days
                       </th>
@@ -372,13 +375,13 @@ export default function CensusPage() {
                   <tbody className="divide-y divide-slate-700">
                     {patients === undefined ? (
                       <tr>
-                        <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                        <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
                           Loading...
                         </td>
                       </tr>
                     ) : patients.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                        <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
                           No patients found
                         </td>
                       </tr>
@@ -420,6 +423,11 @@ export default function CensusPage() {
                           </td>
                           <td className="px-4 py-3 text-sm text-slate-300 max-w-xs truncate">
                             {patient.clinicalStatus || (
+                              <span className="text-slate-500 italic">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-slate-300 max-w-xs truncate">
+                            {patient.pendingProcedures || (
                               <span className="text-slate-500 italic">—</span>
                             )}
                           </td>
@@ -514,6 +522,15 @@ export default function CensusPage() {
                           <p className="text-slate-400 text-sm mb-1">Disposition Considerations</p>
                           <p className="bg-slate-700/50 rounded p-3">
                             {patient.dispositionConsiderations}
+                          </p>
+                        </div>
+                      )}
+
+                      {patient.pendingProcedures && (
+                        <div className="mb-4">
+                          <p className="text-slate-400 text-sm mb-1">Pending Procedures</p>
+                          <p className="bg-slate-700/50 rounded p-3">
+                            {patient.pendingProcedures}
                           </p>
                         </div>
                       )}

@@ -719,6 +719,7 @@ export default defineSchema({
     primaryDiagnosis: v.optional(v.string()), // 2-5 sentence narrative
     clinicalStatus: v.optional(v.string()), // Pipe-separated status
     dispositionConsiderations: v.optional(v.string()), // Trajectory, barriers, timeline
+    pendingProcedures: v.optional(v.string()), // Scheduled procedures, tests, consults
     projectedDischargeDays: v.optional(v.number()), // Integer: days until discharge
 
     // Additional tracking

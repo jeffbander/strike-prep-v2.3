@@ -15,6 +15,7 @@ For each patient in the input, provide predictions in the following JSON format:
   "primaryDiagnosis": "3-5 sentences: age/sex, diagnosis, procedures (with POD#), complications, PMHx, allergies",
   "clinicalStatus": "Pipe-separated: POD#, Resp status, MCS (ECMO/IABP/Impella), Drips, Lines, Rhythm, Renal, Neuro",
   "dispositionConsiderations": "Trajectory (Improving/Stable/Worsening/Critical), Barriers, Downgrade potential, Est ICU stay",
+  "pendingProcedures": "List all scheduled or pending procedures, tests, and consults that are barriers to discharge or part of the care plan. Include: scheduled surgeries or interventions (with date if known), pending imaging (CT, MRI, Echo, CTA), pending lab results (pathology, cultures), pending consults (EP, GI, PT/OT), procedures in planning phase. Write 'None' if no pending procedures. Examples: 'OR CABG tomorrow', 'PCI 1/7', 'PPM today (possible)', 'CT head pending, RHC with vasoreactivity testing', 'Pathology results pending', 'EP consult, Event monitor placement', 'None'",
   "projectedDischargeDays": integer (1-3: imminent, 4-7: short, 8-14: extended, 15-21: prolonged, 21-30: very prolonged, 30+: unable to predict)
 }
 
@@ -36,6 +37,7 @@ For each patient in the input, provide predictions in the following JSON format:
   "primaryDiagnosis": "2-3 sentence narrative: admission reason, key procedures, current phase",
   "clinicalStatus": "Pipe-separated: Resp (O2 req), Rhythm, Mobility (PT status), Diet, Access, Wounds, Key Meds, Labs",
   "dispositionConsiderations": "Destination (Home/SAR/SNF/LTACH), Barriers (placement/insurance/PT clearance), Requirements (VNA/O2/equipment)",
+  "pendingProcedures": "List all scheduled or pending procedures, tests, and consults that are barriers to discharge or part of the care plan. Include: scheduled surgeries or interventions (with date if known), pending imaging (CT, MRI, Echo, CTA), pending lab results (pathology, cultures), pending consults (EP, GI, PT/OT), procedures in planning phase. Write 'None' if no pending procedures. Examples: 'OR CABG tomorrow', 'PCI 1/7', 'PPM today (possible)', 'CT head pending, RHC with vasoreactivity testing', 'Pathology results pending', 'EP consult, Event monitor placement', 'None'",
   "projectedDischargeDays": integer
 }
 
@@ -100,6 +102,7 @@ interface PatientPrediction {
   primaryDiagnosis?: string;
   clinicalStatus?: string;
   dispositionConsiderations?: string;
+  pendingProcedures?: string;
   projectedDischargeDays?: number;
 }
 
@@ -169,6 +172,7 @@ export const generatePredictions = action({
                   primaryDiagnosis: pred.primaryDiagnosis,
                   clinicalStatus: pred.clinicalStatus,
                   dispositionConsiderations: pred.dispositionConsiderations,
+                  pendingProcedures: pred.pendingProcedures,
                   projectedDischargeDays: pred.projectedDischargeDays,
                 },
               });
@@ -193,6 +197,7 @@ export const generatePredictions = action({
                   primaryDiagnosis: pred.primaryDiagnosis,
                   clinicalStatus: pred.clinicalStatus,
                   dispositionConsiderations: pred.dispositionConsiderations,
+                  pendingProcedures: pred.pendingProcedures,
                   projectedDischargeDays: pred.projectedDischargeDays,
                 },
               });
@@ -338,6 +343,7 @@ export const processSinglePatient = action({
             primaryDiagnosis: predictions[0].primaryDiagnosis,
             clinicalStatus: predictions[0].clinicalStatus,
             dispositionConsiderations: predictions[0].dispositionConsiderations,
+            pendingProcedures: predictions[0].pendingProcedures,
             projectedDischargeDays: predictions[0].projectedDischargeDays,
           },
         });
