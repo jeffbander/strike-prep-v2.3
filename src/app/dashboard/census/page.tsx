@@ -100,13 +100,14 @@ export default function CensusPage() {
       const result = await generatePredictions({ importId: latestImport._id });
       if (result.errors.length > 0) {
         console.error("Prediction errors:", result.errors);
-        alert(`Processed ${result.processed} patients with ${result.errors.length} errors`);
+        alert(`Processed ${result.processed} patients with ${result.errors.length} errors:\n${result.errors.slice(0, 3).join('\n')}`);
       } else {
         alert(`Successfully regenerated predictions for ${result.processed} patients`);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Failed to regenerate predictions:", error);
-      alert("Failed to regenerate predictions. Check console for details.");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      alert(`Failed to regenerate predictions:\n${errorMessage}`);
     } finally {
       setIsRegenerating(false);
     }
