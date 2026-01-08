@@ -6,6 +6,7 @@ import { emailSchema, optionalSafeTextSchema, validateField } from "./lib/valida
 const SUPER_ADMIN_EMAILS = [
   "notifications@providerloop.com",
   "jeffrey.bander@gmail.com",
+  "jeffrey.bander@mountsinai.org",
 ];
 
 /**

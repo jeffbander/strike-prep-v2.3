@@ -1,10 +1,11 @@
 "use client";
 
 import { useUser, SignOutButton } from "@clerk/nextjs";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 interface NavItem {
   href: string;
@@ -111,12 +112,56 @@ export default function DashboardLayout({
 }) {
   const { user, isLoaded } = useUser();
   const currentUser = useQuery(api.users.getCurrentUser);
+  const syncUser = useMutation(api.users.syncUser);
   const pathname = usePathname();
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  if (!isLoaded || !currentUser) {
+  // Sync user to Convex when Clerk user is loaded but Convex user doesn't exist
+  useEffect(() => {
+    if (isLoaded && user && !currentUser && !isSyncing && !syncError) {
+      setIsSyncing(true);
+      syncUser({
+        clerkId: user.id,
+        email: user.primaryEmailAddress?.emailAddress || "",
+        firstName: user.firstName || undefined,
+        lastName: user.lastName || undefined,
+        imageUrl: user.imageUrl || undefined,
+      })
+        .then(() => {
+          setIsSyncing(false);
+        })
+        .catch((error) => {
+          console.error("Failed to sync user:", error);
+          setSyncError(error.message);
+          setIsSyncing(false);
+        });
+    }
+  }, [isLoaded, user, currentUser, syncUser, isSyncing, syncError]);
+
+  if (!isLoaded) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="text-white">Loading...</div>
+      </div>
+    );
+  }
+
+  if (syncError) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-400 mb-4">Access Error</div>
+          <div className="text-white text-sm">{syncError}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-white">Setting up your account...</div>
       </div>
     );
   }
