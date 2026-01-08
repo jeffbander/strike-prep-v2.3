@@ -117,38 +117,46 @@ export const generatePredictions = action({
     rawClinicalNotes: v.optional(v.string()), // Optional raw notes to analyze
   },
   handler: async (ctx, args): Promise<{ processed: number; errors: string[] }> => {
-    // Verify user is authenticated
-    const user = await ctx.runQuery(internal.censusAI.getUserForAI, {});
-    if (!user) {
-      throw new Error("User not authenticated");
-    }
-
-    // Get the import record
-    const importRecord = await ctx.runQuery(internal.censusAI.getImportForAI, {
-      importId: args.importId,
-    });
-    if (!importRecord) {
-      throw new Error("Import not found");
-    }
-
-    // Get patients to process
-    const patients = await ctx.runQuery(internal.censusAI.getPatientsForAI, {
-      importId: args.importId,
-      unitType: args.unitType,
-    });
-
-    if (patients.length === 0) {
-      return { processed: 0, errors: ["No patients to process"] };
-    }
-
-    // Get Anthropic API key from environment
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error("ANTHROPIC_API_KEY not configured. Please set it in Convex environment variables.");
-    }
-
     const errors: string[] = [];
     let processed = 0;
+
+    try {
+      // Verify user is authenticated
+      console.log("Checking user authentication...");
+      const user = await ctx.runQuery(internal.censusAI.getUserForAI, {});
+      if (!user) {
+        return { processed: 0, errors: ["User not authenticated"] };
+      }
+      console.log("User authenticated:", user._id);
+
+      // Get the import record
+      console.log("Getting import record...");
+      const importRecord = await ctx.runQuery(internal.censusAI.getImportForAI, {
+        importId: args.importId,
+      });
+      if (!importRecord) {
+        return { processed: 0, errors: ["Import not found"] };
+      }
+      console.log("Import found:", importRecord._id);
+
+      // Get patients to process
+      console.log("Getting patients...");
+      const patients = await ctx.runQuery(internal.censusAI.getPatientsForAI, {
+        importId: args.importId,
+        unitType: args.unitType,
+      });
+      console.log("Found patients:", patients.length);
+
+      if (patients.length === 0) {
+        return { processed: 0, errors: ["No patients to process"] };
+      }
+
+      // Get Anthropic API key from environment
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) {
+        return { processed: 0, errors: ["ANTHROPIC_API_KEY not configured. Please set it in Convex environment variables."] };
+      }
+      console.log("API key found, length:", apiKey.length);
 
     // Process patients in batches of 10
     const batchSize = 10;
@@ -217,6 +225,11 @@ export const generatePredictions = action({
     });
 
     return { processed, errors };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error("Fatal error in generatePredictions:", errorMsg);
+      return { processed, errors: [...errors, `Fatal error: ${errorMsg}`] };
+    }
   },
 });
 
