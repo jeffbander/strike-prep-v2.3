@@ -106,7 +106,14 @@ export default function CensusPage() {
       }
     } catch (error: unknown) {
       console.error("Failed to regenerate predictions:", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      let errorMessage = "Unknown error";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === "object" && error !== null) {
+        errorMessage = JSON.stringify(error, null, 2);
+      } else {
+        errorMessage = String(error);
+      }
       alert(`Failed to regenerate predictions:\n${errorMessage}`);
     } finally {
       setIsRegenerating(false);
