@@ -5,6 +5,7 @@ import { useAuth } from "@clerk/nextjs";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { ReactNode } from "react";
 
+// NEXT_PUBLIC_CONVEX_URL must be set in Vercel environment variables for production
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 
 const convex = convexUrl ? new ConvexReactClient(convexUrl) : null;
