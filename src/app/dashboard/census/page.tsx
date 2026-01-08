@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "convex/react";
+import { useQuery, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import Link from "next/link";
@@ -16,6 +16,9 @@ export default function CensusPage() {
   const [selectedUnitFilter, setSelectedUnitFilter] = useState<string>("");
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [selectedPatientMrn, setSelectedPatientMrn] = useState<string | null>(null);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+
+  const generatePredictions = useAction(api.censusAI.generatePredictions);
 
   const isSuperAdmin = currentUser?.role === "super_admin";
   const needsHospitalSelection = isSuperAdmin || !currentUser?.hospitalId;
@@ -89,6 +92,26 @@ export default function CensusPage() {
     });
   };
 
+  const handleRegeneratePredictions = async () => {
+    if (!latestImport?._id) return;
+
+    setIsRegenerating(true);
+    try {
+      const result = await generatePredictions({ importId: latestImport._id });
+      if (result.errors.length > 0) {
+        console.error("Prediction errors:", result.errors);
+        alert(`Processed ${result.processed} patients with ${result.errors.length} errors`);
+      } else {
+        alert(`Successfully regenerated predictions for ${result.processed} patients`);
+      }
+    } catch (error) {
+      console.error("Failed to regenerate predictions:", error);
+      alert("Failed to regenerate predictions. Check console for details.");
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-900 text-white p-8">
       <div className="max-w-7xl mx-auto">
@@ -127,6 +150,27 @@ export default function CensusPage() {
                   </option>
                 ))}
               </select>
+            )}
+            {effectiveHospitalId && latestImport && (
+              <button
+                onClick={handleRegeneratePredictions}
+                disabled={isRegenerating}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+              >
+                {isRegenerating ? (
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                )}
+                {isRegenerating ? "Regenerating..." : "Regenerate Predictions"}
+              </button>
             )}
             {effectiveHospitalId && (
               <button
