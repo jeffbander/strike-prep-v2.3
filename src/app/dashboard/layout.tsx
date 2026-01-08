@@ -90,7 +90,7 @@ const CensusIcon = () => (
 const navItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: <HomeIcon /> },
   { href: "/dashboard/scenarios", label: "Strike Scenarios", icon: <ScenarioIcon />, highlight: true },
-  { href: "/dashboard/schedules", label: "Schedules", icon: <ScheduleIcon /> },
+  // { href: "/dashboard/schedules", label: "Schedules", icon: <ScheduleIcon /> }, // TODO: Fix TypeScript errors in schedules page
   { href: "/dashboard/availability", label: "Provider Availability", icon: <CalendarIcon /> },
   { href: "/dashboard/coverage", label: "Coverage Dashboard", icon: <ChartIcon /> },
   { href: "/dashboard/census", label: "Patient Census", icon: <CensusIcon />, roles: ["super_admin", "health_system_admin", "hospital_admin"] },
