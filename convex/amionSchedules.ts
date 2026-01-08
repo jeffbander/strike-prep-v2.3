@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
+import { requireAuth, requireDepartmentAccess } from "./lib/auth";
 
 /**
  * Amion Schedule Backend
@@ -789,6 +790,9 @@ export const getScheduleGridByDepartment = query({
     statusFilter: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
+    // Verify user has access to this department
+    await requireDepartmentAccess(ctx, args.departmentId);
+
     // Get providers in department
     const providers = await ctx.db
       .query("providers")
@@ -920,6 +924,9 @@ export const getScheduleByRotation = query({
     endDate: v.string(),
   },
   handler: async (ctx, args) => {
+    // Verify user has access to this department
+    await requireDepartmentAccess(ctx, args.departmentId);
+
     const department = await ctx.db.get(args.departmentId);
     if (!department) return { rotations: [] };
 
@@ -1039,14 +1046,8 @@ export const importSchedule = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .unique();
-    if (!user) throw new Error("User not found");
+    // Verify user has access to this department
+    const user = await requireDepartmentAccess(ctx, args.departmentId);
 
     const department = await ctx.db.get(args.departmentId);
     if (!department) throw new Error("Department not found");
@@ -1185,14 +1186,17 @@ export const addToPool = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
+    // First validate user is authenticated
+    const user = await requireAuth(ctx);
 
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .unique();
-    if (!user) throw new Error("User not found");
+    if (args.providerDatePairs.length === 0) {
+      return { created: 0, skipped: 0 };
+    }
+
+    // Verify user has access to all providers (check first provider's department)
+    const firstProvider = await ctx.db.get(args.providerDatePairs[0].providerId);
+    if (!firstProvider) throw new Error("Provider not found");
+    await requireDepartmentAccess(ctx, firstProvider.departmentId);
 
     let created = 0;
     let skipped = 0;

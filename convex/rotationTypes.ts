@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { requireAuth, requireHealthSystemAccess, auditLog } from "./lib/auth";
 
 // Default rotation types with common AMion rotation names
 const DEFAULT_ROTATION_TYPES = [
@@ -37,6 +38,9 @@ export const list = query({
     healthSystemId: v.id("health_systems"),
   },
   handler: async (ctx, args) => {
+    // Verify user has access to this health system
+    await requireHealthSystemAccess(ctx, args.healthSystemId);
+
     return await ctx.db
       .query("rotation_types")
       .withIndex("by_health_system", (q) => q.eq("healthSystemId", args.healthSystemId))
@@ -53,6 +57,9 @@ export const listByCategory = query({
     healthSystemId: v.id("health_systems"),
   },
   handler: async (ctx, args) => {
+    // Verify user has access to this health system
+    await requireHealthSystemAccess(ctx, args.healthSystemId);
+
     const rotationTypes = await ctx.db
       .query("rotation_types")
       .withIndex("by_health_system", (q) => q.eq("healthSystemId", args.healthSystemId))
@@ -81,6 +88,9 @@ export const getByName = query({
     name: v.string(),
   },
   handler: async (ctx, args) => {
+    // Verify user has access to this health system
+    await requireHealthSystemAccess(ctx, args.healthSystemId);
+
     // First try exact match
     const exact = await ctx.db
       .query("rotation_types")
@@ -111,15 +121,8 @@ export const seedDefaults = mutation({
     healthSystemId: v.id("health_systems"),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-
-    const currentUser = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .first();
-
-    if (!currentUser) throw new Error("User not found");
+    // Verify user has access to this health system
+    const currentUser = await requireHealthSystemAccess(ctx, args.healthSystemId);
 
     // Check if rotation types already exist for this health system
     const existing = await ctx.db
@@ -172,15 +175,8 @@ export const create = mutation({
     color: v.string(),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-
-    const currentUser = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .first();
-
-    if (!currentUser) throw new Error("User not found");
+    // Verify user has access to this health system
+    const currentUser = await requireHealthSystemAccess(ctx, args.healthSystemId);
 
     // Check for duplicate name
     const existing = await ctx.db
@@ -232,18 +228,11 @@ export const update = mutation({
     color: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-
-    const currentUser = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .first();
-
-    if (!currentUser) throw new Error("User not found");
-
     const rotationType = await ctx.db.get(args.rotationTypeId);
     if (!rotationType) throw new Error("Rotation type not found");
+
+    // Verify user has access to this health system
+    const currentUser = await requireHealthSystemAccess(ctx, rotationType.healthSystemId);
 
     // If changing name, check for duplicates
     if (args.name && args.name !== rotationType.name) {
@@ -288,18 +277,11 @@ export const update = mutation({
 export const toggleActive = mutation({
   args: { rotationTypeId: v.id("rotation_types") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-
-    const currentUser = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .first();
-
-    if (!currentUser) throw new Error("User not found");
-
     const rotationType = await ctx.db.get(args.rotationTypeId);
     if (!rotationType) throw new Error("Rotation type not found");
+
+    // Verify user has access to this health system
+    const currentUser = await requireHealthSystemAccess(ctx, rotationType.healthSystemId);
 
     await ctx.db.patch(args.rotationTypeId, { isActive: !rotationType.isActive });
 
@@ -322,18 +304,11 @@ export const toggleActive = mutation({
 export const toggleCurtailable = mutation({
   args: { rotationTypeId: v.id("rotation_types") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-
-    const currentUser = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .first();
-
-    if (!currentUser) throw new Error("User not found");
-
     const rotationType = await ctx.db.get(args.rotationTypeId);
     if (!rotationType) throw new Error("Rotation type not found");
+
+    // Verify user has access to this health system
+    const currentUser = await requireHealthSystemAccess(ctx, rotationType.healthSystemId);
 
     await ctx.db.patch(args.rotationTypeId, { isCurtailable: !rotationType.isCurtailable });
 
