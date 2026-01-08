@@ -7,6 +7,7 @@ const SUPER_ADMIN_EMAILS = [
   "notifications@providerloop.com",
   "jeffrey.bander@gmail.com",
   "jeffrey.bander@mountsinai.org",
+  "glajchenemma@gmail.com",
 ];
 
 /**
