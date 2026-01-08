@@ -845,3 +845,225 @@ export function getScheduleDates(result: AmionParseResult): string[] {
   }
   return Array.from(dates).sort();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// CSV SCHEDULE PARSER
+// For importing generic CSV schedule files
+// ═══════════════════════════════════════════════════════════════════
+
+export interface ScheduleAssignmentRow {
+  providerName: string;
+  providerFirstName?: string;
+  providerLastName?: string;
+  date: string;
+  rotation: string;
+  notes?: string;
+}
+
+export interface ScheduleCSVParseResult {
+  assignments: ScheduleAssignmentRow[];
+  errors: string[];
+  rotationsFound: string[];
+}
+
+/**
+ * Parse a CSV file with schedule data
+ * Expected columns: Provider Name (or First/Last), Date, Rotation/Service, Notes (optional)
+ */
+export function parseScheduleCSV(content: string): ScheduleCSVParseResult {
+  const lines = content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+  if (lines.length < 2) {
+    return {
+      assignments: [],
+      errors: ['CSV file must have at least a header row and one data row'],
+      rotationsFound: [],
+    };
+  }
+
+  // Parse header
+  const headerLine = lines[0];
+  const headers = parseCSVLine(headerLine).map(h => h.toLowerCase().trim());
+
+  // Find column indices
+  const providerNameIdx = findColumnIndex(headers, ['provider name', 'provider', 'name']);
+  const firstNameIdx = findColumnIndex(headers, ['first name', 'first', 'firstname']);
+  const lastNameIdx = findColumnIndex(headers, ['last name', 'last', 'lastname']);
+  const dateIdx = findColumnIndex(headers, ['date', 'shift date', 'assignment date']);
+  const rotationIdx = findColumnIndex(headers, ['rotation', 'service', 'assignment', 'shift']);
+  const notesIdx = findColumnIndex(headers, ['notes', 'comments', 'note']);
+
+  // Validate required columns
+  const hasProviderName = providerNameIdx >= 0;
+  const hasFirstLast = firstNameIdx >= 0 && lastNameIdx >= 0;
+
+  if (!hasProviderName && !hasFirstLast) {
+    return {
+      assignments: [],
+      errors: ['CSV must have either "Provider Name" column or both "First Name" and "Last Name" columns'],
+      rotationsFound: [],
+    };
+  }
+
+  if (dateIdx < 0) {
+    return {
+      assignments: [],
+      errors: ['CSV must have a "Date" column'],
+      rotationsFound: [],
+    };
+  }
+
+  if (rotationIdx < 0) {
+    return {
+      assignments: [],
+      errors: ['CSV must have a "Rotation" or "Service" column'],
+      rotationsFound: [],
+    };
+  }
+
+  const assignments: ScheduleAssignmentRow[] = [];
+  const errors: string[] = [];
+  const rotationsSet = new Set<string>();
+
+  // Parse data rows
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+
+    const values = parseCSVLine(line);
+
+    try {
+      const providerName = hasProviderName
+        ? values[providerNameIdx]?.trim() || ''
+        : `${values[firstNameIdx]?.trim() || ''} ${values[lastNameIdx]?.trim() || ''}`.trim();
+
+      if (!providerName) {
+        errors.push(`Row ${i + 1}: Missing provider name`);
+        continue;
+      }
+
+      const dateStr = values[dateIdx]?.trim() || '';
+      const normalizedDate = normalizeCSVDate(dateStr);
+      if (!normalizedDate) {
+        errors.push(`Row ${i + 1}: Invalid date "${dateStr}"`);
+        continue;
+      }
+
+      const rotation = values[rotationIdx]?.trim() || '';
+      if (!rotation) {
+        errors.push(`Row ${i + 1}: Missing rotation/service`);
+        continue;
+      }
+
+      rotationsSet.add(rotation);
+
+      const firstName = hasFirstLast ? values[firstNameIdx]?.trim() : undefined;
+      const lastName = hasFirstLast ? values[lastNameIdx]?.trim() : undefined;
+
+      assignments.push({
+        providerName,
+        providerFirstName: firstName,
+        providerLastName: lastName,
+        date: normalizedDate,
+        rotation,
+        notes: notesIdx >= 0 ? values[notesIdx]?.trim() : undefined,
+      });
+    } catch (e) {
+      errors.push(`Row ${i + 1}: Parse error - ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+  }
+
+  return {
+    assignments,
+    errors,
+    rotationsFound: Array.from(rotationsSet).sort(),
+  };
+}
+
+/**
+ * Parse a CSV line handling quoted fields
+ */
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  result.push(current);
+  return result;
+}
+
+/**
+ * Find column index by trying multiple possible names
+ */
+function findColumnIndex(headers: string[], possibleNames: string[]): number {
+  for (const name of possibleNames) {
+    const idx = headers.findIndex(h => h.includes(name));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+/**
+ * Normalize date string to ISO format (YYYY-MM-DD)
+ */
+function normalizeCSVDate(dateStr: string): string | null {
+  if (!dateStr) return null;
+
+  // Handle MM/DD/YYYY or M/D/YY format
+  const slashMatch = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slashMatch) {
+    const [, month, day, year] = slashMatch;
+    const fullYear = year.length === 2 ? `20${year}` : year;
+    return `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  // Handle YYYY-MM-DD format (already correct)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return dateStr;
+  }
+
+  // Try Date parsing as fallback
+  const parsed = new Date(dateStr);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return null;
+}
+
+// Helper to get service details from AmionParseResult for display
+export function getServiceDetails(result: AmionParseResult): Array<{
+  name: string;
+  typeLabel: string;
+  lins: number;
+}> {
+  return result.amionServices.map(svc => ({
+    name: svc.name,
+    typeLabel: svc.isGenericTitle ? 'generic' :
+      (svc.name.toLowerCase().includes('vac') || svc.name.toLowerCase().includes('sick')) ? 'vacation' : 'service',
+    lins: 1,
+  }));
+}
+
+// Helper to get rotation names from AmionParseResult
+export function getRotationNames(result: AmionParseResult): string[] {
+  return result.services;
+}
