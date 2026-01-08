@@ -102,6 +102,7 @@ export default function CensusImport({
         primaryDiagnosis?: string;
         clinicalStatus?: string;
         dispositionConsiderations?: string;
+        pendingProcedures?: string;
         projectedDischargeDays?: number;
       }> = [];
 
@@ -119,6 +120,7 @@ export default function CensusImport({
             primaryDiagnosis: patient.primaryDiagnosis,
             clinicalStatus: patient.clinicalStatus,
             dispositionConsiderations: patient.dispositionConsiderations,
+            pendingProcedures: patient.pendingProcedures,
             projectedDischargeDays: patient.projectedDischargeDays,
           });
         }

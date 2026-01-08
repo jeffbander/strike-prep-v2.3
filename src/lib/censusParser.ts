@@ -24,6 +24,7 @@ export interface CensusPatient {
   primaryDiagnosis?: string;
   clinicalStatus?: string;
   dispositionConsiderations?: string;
+  pendingProcedures?: string; // Scheduled procedures, tests, consults
   projectedDischargeDays?: number;
   // For AI processing workflow
   rawClinicalNotes?: string;
@@ -69,6 +70,7 @@ const COLUMN_PATTERNS = {
   primaryDx: ["primary dx", "primary diagnosis", "diagnosis", "dx", "primary_dx"],
   generalComments: ["general comments", "comments", "notes", "clinical notes", "comment"],
   dischargeToday: ["discharge today", "discharge today?", "dc today", "dispo", "discharge status"],
+  pendingProcedures: ["pending procedures", "pending", "procedures", "scheduled procedures", "tests", "consults"],
   room: ["room", "rm"],
   bed: ["bed"],
 };
@@ -269,6 +271,7 @@ export function parseCensusExcel(data: ArrayBuffer): CensusParseResult {
       primaryDx: findColumnName(headers, COLUMN_PATTERNS.primaryDx),
       generalComments: findColumnName(headers, COLUMN_PATTERNS.generalComments),
       dischargeToday: findColumnName(headers, COLUMN_PATTERNS.dischargeToday),
+      pendingProcedures: findColumnName(headers, COLUMN_PATTERNS.pendingProcedures),
       room: findColumnName(headers, COLUMN_PATTERNS.room),
       bed: findColumnName(headers, COLUMN_PATTERNS.bed),
     };
@@ -344,6 +347,11 @@ export function parseCensusExcel(data: ArrayBuffer): CensusParseResult {
           ? String(row[columns.generalComments] || "").trim() || undefined
           : undefined;
 
+        // Get pending procedures
+        const pendingProcedures = columns.pendingProcedures
+          ? String(row[columns.pendingProcedures] || "").trim() || undefined
+          : undefined;
+
         const patient: CensusPatient = {
           mrn,
           patientName,
@@ -360,6 +368,7 @@ export function parseCensusExcel(data: ArrayBuffer): CensusParseResult {
             : undefined,
           primaryDiagnosis,
           clinicalStatus: generalComments,
+          pendingProcedures,
           rawClinicalNotes: generalComments,
           dischargeStatus,
           projectedDischargeDays,
