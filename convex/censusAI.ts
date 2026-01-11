@@ -308,6 +308,7 @@ async function callAnthropic(
     losDays?: number;
     primaryDiagnosis?: string;
     clinicalStatus?: string;
+    rawGeneralComments?: string;
   }>,
   rawClinicalNotes?: string
 ): Promise<PatientPrediction[]> {
@@ -321,6 +322,7 @@ async function callAnthropic(
     losDays: p.losDays,
     existingDiagnosis: p.primaryDiagnosis,
     existingStatus: p.clinicalStatus,
+    generalComments: p.rawGeneralComments,
   }));
 
   let userMessage = `Please analyze the following patients and provide discharge predictions:\n\n${JSON.stringify(patientData, null, 2)}`;
