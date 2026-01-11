@@ -7,7 +7,15 @@ import { Id } from "./_generated/dataModel";
 // AI PROMPTS
 // ═══════════════════════════════════════════════════════════════════
 
-const ICU_PROMPT = `You are a clinical operations analyst reviewing cardiac/cardiothoracic ICU patient data for census management and discharge planning. For each patient, analyze all available documentation and produce a structured summary.
+const ICU_PROMPT = `You are a clinical operations analyst reviewing cardiac/cardiothoracic ICU patient data for census management, discharge planning, and staffing predictions.
+
+IMPORTANT - 1:1 NURSING DETECTION:
+Identify patients requiring 1:1 nursing care. Look for these life support devices in the clinical notes:
+- ECMO (Extracorporeal Membrane Oxygenation) - includes VV ECMO, VA ECMO
+- CVVH (Continuous Venovenous Hemofiltration) / CRRT
+- Impella (mechanical circulatory support)
+- IABP (Intra-Aortic Balloon Pump)
+NOTE: Ventilator/intubation alone does NOT require 1:1 nursing.
 
 For each patient in the input, provide predictions in the following JSON format:
 {
@@ -16,16 +24,30 @@ For each patient in the input, provide predictions in the following JSON format:
   "clinicalStatus": "Pipe-separated: POD#, Resp status, MCS (ECMO/IABP/Impella), Drips, Lines, Rhythm, Renal, Neuro",
   "dispositionConsiderations": "Trajectory (Improving/Stable/Worsening/Critical), Barriers, Downgrade potential, Est ICU stay",
   "pendingProcedures": "List all scheduled or pending procedures, tests, and consults that are barriers to discharge or part of the care plan. Include: scheduled surgeries or interventions (with date if known), pending imaging (CT, MRI, Echo, CTA), pending lab results (pathology, cultures), pending consults (EP, GI, PT/OT), procedures in planning phase. Write 'None' if no pending procedures. Examples: 'OR CABG tomorrow', 'PCI 1/7', 'PPM today (possible)', 'CT head pending, RHC with vasoreactivity testing', 'Pathology results pending', 'EP consult, Event monitor placement', 'None'",
-  "projectedDischargeDays": integer (1-3: imminent, 4-7: short, 8-14: extended, 15-21: prolonged, 21-30: very prolonged, 30+: unable to predict)
+  "projectedDischargeDays": integer (1-3: imminent, 4-7: short, 8-14: extended, 15-21: prolonged, 21-30: very prolonged, 30+: unable to predict),
+  "requiresOneToOne": boolean (true if patient has ECMO, CVVH, Impella, or IABP),
+  "oneToOneDevices": ["ECMO", "Impella"] (array of detected devices, empty array if none),
+  "predictedDowngrade": {
+    "likely": boolean (true if patient likely to step down to floor soon),
+    "daysUntilDowngrade": integer or null (estimated days until transfer to floor),
+    "targetUnit": "7C" or null (suggested floor unit based on service/location pattern)
+  }
 }
 
 Guidelines by Scenario:
-- Uncomplicated CABG/valve: 2-4 days
-- Uncomplicated OHT: 7-14 days
-- Post-lung transplant: 10-21 days
-- On ECMO: 14-30+ days
-- Impella bridge to transplant: 5-14 days
+- Uncomplicated CABG/valve: 2-4 days ICU, then step down to 7W/7C
+- Uncomplicated OHT: 7-14 days ICU
+- Post-lung transplant: 10-21 days ICU
+- On ECMO: 14-30+ days (requires 1:1 nursing)
+- On CVVH/CRRT: 7-21 days (requires 1:1 nursing)
+- Impella bridge to transplant: 5-14 days (requires 1:1 nursing)
+- IABP: 2-7 days (requires 1:1 nursing)
 - Multi-organ failure: 21-30+ days
+
+Downgrade Considerations:
+- Patient improving, off pressors, stable rhythm → likely downgrade soon
+- POD3-4 uncomplicated post-op → ready for floor
+- Still on drips, unstable, or requiring close monitoring → not ready
 
 Return a JSON array of predictions for all patients.`;
 
@@ -38,8 +60,12 @@ For each patient in the input, provide predictions in the following JSON format:
   "clinicalStatus": "Pipe-separated: Resp (O2 req), Rhythm, Mobility (PT status), Diet, Access, Wounds, Key Meds, Labs",
   "dispositionConsiderations": "Destination (Home/SAR/SNF/LTACH), Barriers (placement/insurance/PT clearance), Requirements (VNA/O2/equipment)",
   "pendingProcedures": "List all scheduled or pending procedures, tests, and consults that are barriers to discharge or part of the care plan. Include: scheduled surgeries or interventions (with date if known), pending imaging (CT, MRI, Echo, CTA), pending lab results (pathology, cultures), pending consults (EP, GI, PT/OT), procedures in planning phase. Write 'None' if no pending procedures. Examples: 'OR CABG tomorrow', 'PCI 1/7', 'PPM today (possible)', 'CT head pending, RHC with vasoreactivity testing', 'Pathology results pending', 'EP consult, Event monitor placement', 'None'",
-  "projectedDischargeDays": integer
+  "projectedDischargeDays": integer,
+  "requiresOneToOne": false,
+  "oneToOneDevices": []
 }
+
+NOTE: Floor patients typically do not require 1:1 nursing care. Set requiresOneToOne to false and oneToOneDevices to empty array.
 
 Disposition Stratification:
 - Likely Home 1-2 days: Post-routine PCI/TAVR, stable post-op POD 4-5+
@@ -104,6 +130,15 @@ interface PatientPrediction {
   dispositionConsiderations?: string;
   pendingProcedures?: string;
   projectedDischargeDays?: number;
+  // 1:1 Nursing detection
+  requiresOneToOne?: boolean;
+  oneToOneDevices?: string[];
+  // Downgrade prediction (ICU only)
+  predictedDowngrade?: {
+    likely: boolean;
+    daysUntilDowngrade: number | null;
+    targetUnit: string | null;
+  };
 }
 
 /**
@@ -174,6 +209,16 @@ export const generatePredictions = action({
           for (const pred of predictions) {
             const patient = icuPatients.find((p) => p.mrn === pred.mrn);
             if (patient) {
+              // Calculate predicted downgrade date if applicable
+              let predictedDowngradeDate: string | undefined;
+              let predictedDowngradeUnit: string | undefined;
+              if (pred.predictedDowngrade?.likely && pred.predictedDowngrade.daysUntilDowngrade !== null) {
+                const downgradeDate = new Date();
+                downgradeDate.setDate(downgradeDate.getDate() + pred.predictedDowngrade.daysUntilDowngrade);
+                predictedDowngradeDate = downgradeDate.toISOString().split("T")[0];
+                predictedDowngradeUnit = pred.predictedDowngrade.targetUnit || undefined;
+              }
+
               await ctx.runMutation(internal.census.updatePatientPredictions, {
                 patientId: patient._id,
                 predictions: {
@@ -182,6 +227,13 @@ export const generatePredictions = action({
                   dispositionConsiderations: pred.dispositionConsiderations,
                   pendingProcedures: pred.pendingProcedures,
                   projectedDischargeDays: pred.projectedDischargeDays,
+                  // 1:1 Nursing detection
+                  requiresOneToOne: pred.requiresOneToOne,
+                  oneToOneDevices: pred.oneToOneDevices,
+                  oneToOneSource: pred.requiresOneToOne ? "ai" : undefined,
+                  // Downgrade prediction
+                  predictedDowngradeDate,
+                  predictedDowngradeUnit,
                 },
               });
               processed++;
@@ -207,6 +259,9 @@ export const generatePredictions = action({
                   dispositionConsiderations: pred.dispositionConsiderations,
                   pendingProcedures: pred.pendingProcedures,
                   projectedDischargeDays: pred.projectedDischargeDays,
+                  // Floor patients don't typically need 1:1
+                  requiresOneToOne: false,
+                  oneToOneDevices: [],
                 },
               });
               processed++;

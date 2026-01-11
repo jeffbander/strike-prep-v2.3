@@ -347,6 +347,21 @@ export const upsertPatients = mutation({
         service: v.optional(v.string()),
         losDays: v.optional(v.number()),
         attendingDoctor: v.optional(v.string()),
+        // Demographics (from CSV)
+        sex: v.optional(v.string()),
+        dob: v.optional(v.string()),
+        age: v.optional(v.number()),
+        language: v.optional(v.string()),
+        csn: v.optional(v.string()),
+        // Location (can change between uploads)
+        room: v.optional(v.string()),
+        bed: v.optional(v.string()),
+        // 1:1 Nursing detection
+        requiresOneToOne: v.boolean(),
+        oneToOneDevices: v.optional(v.array(v.string())),
+        // AI input from CSV
+        dischargeToday: v.optional(v.string()),
+        rawGeneralComments: v.optional(v.string()),
         // AI-generated fields (optional - may be pre-populated or null)
         primaryDiagnosis: v.optional(v.string()),
         clinicalStatus: v.optional(v.string()),
@@ -414,11 +429,31 @@ export const upsertPatients = mutation({
             censusDate: patient.censusDate,
             losDays: patient.losDays,
             attendingDoctor: patient.attendingDoctor,
+            // Demographics
+            sex: patient.sex,
+            dob: patient.dob,
+            age: patient.age,
+            language: patient.language,
+            csn: patient.csn,
+            // Location
+            room: patient.room,
+            bed: patient.bed,
+            // 1:1 Nursing
+            requiresOneToOne: patient.requiresOneToOne,
+            oneToOneDevices: patient.oneToOneDevices,
+            oneToOneSource: patient.requiresOneToOne ? "keyword" : undefined,
+            // AI input
+            dischargeToday: patient.dischargeToday,
+            rawGeneralComments: patient.rawGeneralComments,
+            // AI-generated fields
             primaryDiagnosis: patient.primaryDiagnosis,
             clinicalStatus: patient.clinicalStatus,
             dispositionConsiderations: patient.dispositionConsiderations,
             pendingProcedures: patient.pendingProcedures,
             projectedDischargeDays: patient.projectedDischargeDays,
+            // Status
+            patientStatus: "active",
+            lastSeenImportId: args.importId,
             expiresAt,
             updatedAt: now,
           });
@@ -437,11 +472,31 @@ export const upsertPatients = mutation({
             censusDate: patient.censusDate,
             losDays: patient.losDays,
             attendingDoctor: patient.attendingDoctor,
+            // Demographics
+            sex: patient.sex,
+            dob: patient.dob,
+            age: patient.age,
+            language: patient.language,
+            csn: patient.csn,
+            // Location
+            room: patient.room,
+            bed: patient.bed,
+            // 1:1 Nursing
+            requiresOneToOne: patient.requiresOneToOne,
+            oneToOneDevices: patient.oneToOneDevices,
+            oneToOneSource: patient.requiresOneToOne ? "keyword" : undefined,
+            // AI input
+            dischargeToday: patient.dischargeToday,
+            rawGeneralComments: patient.rawGeneralComments,
+            // AI-generated fields
             primaryDiagnosis: patient.primaryDiagnosis,
             clinicalStatus: patient.clinicalStatus,
             dispositionConsiderations: patient.dispositionConsiderations,
             pendingProcedures: patient.pendingProcedures,
             projectedDischargeDays: patient.projectedDischargeDays,
+            // Status
+            patientStatus: "active",
+            lastSeenImportId: args.importId,
             expiresAt,
             isActive: true,
             createdAt: now,
@@ -510,11 +565,30 @@ export const updatePatientPredictions = internalMutation({
       dispositionConsiderations: v.optional(v.string()),
       pendingProcedures: v.optional(v.string()),
       projectedDischargeDays: v.optional(v.number()),
+      // 1:1 Nursing detection
+      requiresOneToOne: v.optional(v.boolean()),
+      oneToOneDevices: v.optional(v.array(v.string())),
+      oneToOneSource: v.optional(v.string()),
+      // Downgrade prediction (ICU only)
+      predictedDowngradeDate: v.optional(v.string()),
+      predictedDowngradeUnit: v.optional(v.string()),
     }),
   },
   handler: async (ctx, args) => {
+    const patient = await ctx.db.get(args.patientId);
+    if (!patient) return;
+
+    // Determine 1:1 source - if AI found it and keyword already found it, mark as "both"
+    let oneToOneSource = args.predictions.oneToOneSource;
+    if (args.predictions.requiresOneToOne && patient.oneToOneSource === "keyword") {
+      oneToOneSource = "both";
+    } else if (args.predictions.requiresOneToOne) {
+      oneToOneSource = oneToOneSource || "ai";
+    }
+
     await ctx.db.patch(args.patientId, {
       ...args.predictions,
+      oneToOneSource,
       updatedAt: Date.now(),
     });
   },
@@ -600,5 +674,229 @@ export const deactivatePatient = mutation({
     await auditLog(ctx, user, "DEACTIVATE", "PROVIDER", args.patientId, {
       mrn: patient.mrn,
     });
+  },
+});
+
+/**
+ * Mark patients as discharged if not present in new import
+ * Called after upsertPatients completes
+ */
+export const markDischargedPatients = mutation({
+  args: {
+    importId: v.id("census_imports"),
+    currentMrns: v.array(v.string()), // MRNs present in this import
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+
+    const importRecord = await ctx.db.get(args.importId);
+    if (!importRecord) throw new Error("Import not found");
+
+    await requireHospitalAccess(ctx, importRecord.hospitalId);
+
+    const now = Date.now();
+    const hospitalId = importRecord.hospitalId;
+    const expiresAt = now + THREE_DAYS_MS;
+
+    // Get all active patients for this hospital
+    const activePatients = await ctx.db
+      .query("census_patients")
+      .withIndex("by_patient_status", (q) =>
+        q.eq("hospitalId", hospitalId).eq("patientStatus", "active")
+      )
+      .collect();
+
+    // Mark as discharged if not in current import
+    const currentMrnSet = new Set(args.currentMrns);
+    let dischargedCount = 0;
+
+    for (const patient of activePatients) {
+      if (!currentMrnSet.has(patient.mrn)) {
+        await ctx.db.patch(patient._id, {
+          patientStatus: "discharged",
+          dischargedAt: now,
+          isActive: false,
+          updatedAt: now,
+        });
+
+        // Record discharge in history
+        await ctx.db.insert("census_patient_history", {
+          patientId: patient._id,
+          hospitalId,
+          mrn: patient.mrn,
+          fromUnitName: patient.currentUnitName,
+          toUnitName: "DISCHARGED",
+          transferDate: importRecord.uploadDate,
+          clinicalSummary: "Patient not present in census - assumed discharged or transferred off service",
+          createdAt: now,
+          expiresAt,
+        });
+
+        dischargedCount++;
+      }
+    }
+
+    return { dischargedCount };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// STAFFING PREDICTIONS
+// ═══════════════════════════════════════════════════════════════════
+
+// Staffing ratio constants
+const STAFFING_RATIOS = {
+  oneToOne: 1, // 1:1 for ECMO/CVVH/Impella/IABP
+  icu: 2, // 1:2 for ICU
+  floor: 5, // 1:5 for floor
+};
+
+/**
+ * Calculate staffing predictions by unit
+ * Returns AM/PM shift predictions with RN needs based on:
+ * - Floor: 1:5 ratio
+ * - ICU: 1:2 ratio
+ * - 1:1 devices (ECMO, CVVH, Impella, IABP): dedicated 1:1 RN
+ */
+export const getStaffingPredictions = query({
+  args: {
+    hospitalId: v.id("hospitals"),
+  },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx);
+    await requireHospitalAccess(ctx, args.hospitalId);
+
+    const latestImport = await ctx.db
+      .query("census_imports")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .order("desc")
+      .first();
+
+    if (!latestImport) {
+      return { predictions: [], censusDate: null };
+    }
+
+    // Get active patients
+    const patients = await ctx.db
+      .query("census_patients")
+      .withIndex("by_patient_status", (q) =>
+        q.eq("hospitalId", args.hospitalId).eq("patientStatus", "active")
+      )
+      .collect();
+
+    // Group by unit
+    const unitMap = new Map<
+      string,
+      {
+        unitName: string;
+        unitType: string;
+        patients: typeof patients;
+        oneToOnePatients: typeof patients;
+      }
+    >();
+
+    for (const patient of patients) {
+      if (!unitMap.has(patient.currentUnitName)) {
+        unitMap.set(patient.currentUnitName, {
+          unitName: patient.currentUnitName,
+          unitType: patient.unitType,
+          patients: [],
+          oneToOnePatients: [],
+        });
+      }
+      const unit = unitMap.get(patient.currentUnitName)!;
+      unit.patients.push(patient);
+      if (patient.requiresOneToOne) {
+        unit.oneToOnePatients.push(patient);
+      }
+    }
+
+    // Calculate predictions for each unit
+    const predictions = Array.from(unitMap.values()).map((unit) => {
+      const isICU = unit.unitType === "icu";
+      const baseRatio = isICU ? STAFFING_RATIOS.icu : STAFFING_RATIOS.floor;
+
+      // Count predicted discharges based on projectedDischargeDays
+      // AM discharges: patients leaving today (projectedDischargeDays = 0 or 1)
+      // PM discharges: patients likely leaving later today or tomorrow (projectedDischargeDays = 1 or 2)
+      const amDischarges = unit.patients.filter(
+        (p) => p.projectedDischargeDays !== undefined && p.projectedDischargeDays <= 1
+      ).length;
+      const pmDischarges = unit.patients.filter(
+        (p) => p.projectedDischargeDays !== undefined && p.projectedDischargeDays === 2
+      ).length;
+
+      // Count predicted downgrades (ICU patients predicted to step down)
+      const amDowngrades = isICU
+        ? unit.patients.filter(
+            (p) =>
+              p.predictedDowngradeDate === latestImport.uploadDate ||
+              (p.projectedDischargeDays !== undefined && p.projectedDischargeDays <= 2)
+          ).length
+        : 0;
+
+      const currentCount = unit.patients.length;
+      const oneToOneCount = unit.oneToOnePatients.length;
+
+      // Calculate end-of-shift census
+      const amEndCensus = Math.max(0, currentCount - amDischarges - amDowngrades);
+      const pmEndCensus = Math.max(0, currentCount - amDischarges - pmDischarges - amDowngrades);
+
+      // Calculate RN needs
+      // Regular patients: divide by ratio
+      // 1:1 patients: each needs dedicated RN
+      const regularAMPatients = Math.max(0, amEndCensus - oneToOneCount);
+      const regularPMPatients = Math.max(0, pmEndCensus - oneToOneCount);
+
+      const amRnNeeded = Math.ceil(regularAMPatients / baseRatio);
+      const pmRnNeeded = Math.ceil(regularPMPatients / baseRatio);
+
+      return {
+        unitName: unit.unitName,
+        unitType: unit.unitType,
+        currentPatients: currentCount,
+        oneToOnePatients: oneToOneCount,
+        oneToOneDevices: unit.oneToOnePatients.flatMap((p) => p.oneToOneDevices || []),
+        amShift: {
+          predictedDischarges: amDischarges,
+          predictedDowngrades: amDowngrades,
+          endOfShiftCensus: amEndCensus,
+          rnNeeded: amRnNeeded,
+          oneToOneRnNeeded: oneToOneCount,
+          totalRnNeeded: amRnNeeded + oneToOneCount,
+        },
+        pmShift: {
+          predictedDischarges: pmDischarges,
+          predictedDowngrades: 0, // Usually no downgrades on PM shift
+          endOfShiftCensus: pmEndCensus,
+          rnNeeded: pmRnNeeded,
+          oneToOneRnNeeded: oneToOneCount,
+          totalRnNeeded: pmRnNeeded + oneToOneCount,
+        },
+      };
+    });
+
+    // Sort: ICUs first, then by patient count
+    predictions.sort((a, b) => {
+      if (a.unitType !== b.unitType) {
+        return a.unitType === "icu" ? -1 : 1;
+      }
+      return b.currentPatients - a.currentPatients;
+    });
+
+    // Calculate totals
+    const totals = {
+      totalPatients: patients.length,
+      totalOneToOne: patients.filter((p) => p.requiresOneToOne).length,
+      amTotalRn: predictions.reduce((sum, p) => sum + p.amShift.totalRnNeeded, 0),
+      pmTotalRn: predictions.reduce((sum, p) => sum + p.pmShift.totalRnNeeded, 0),
+    };
+
+    return {
+      predictions,
+      totals,
+      censusDate: latestImport.uploadDate,
+      importedAt: latestImport.importedAt,
+    };
   },
 });

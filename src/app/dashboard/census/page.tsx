@@ -55,6 +55,12 @@ export default function CensusPage() {
       : "skip"
   );
 
+  // Staffing predictions query
+  const staffingPredictions = useQuery(
+    api.census.getStaffingPredictions,
+    effectiveHospitalId ? { hospitalId: effectiveHospitalId } : "skip"
+  );
+
   // Filter hospitals based on user's health system
   const availableHospitals = hospitals?.filter((h) => {
     if (isSuperAdmin) return true;
@@ -376,6 +382,132 @@ export default function CensusPage() {
               </div>
             </div>
 
+            {/* Staffing Predictions Panel */}
+            {staffingPredictions && staffingPredictions.predictions.length > 0 && (
+              <div className="bg-slate-800 rounded-lg p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-purple-600/20 rounded-lg flex items-center justify-center">
+                      <svg className="w-5 h-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold">Staffing Predictions</h2>
+                      <p className="text-sm text-slate-400">RN needs by unit (Floor 1:5, ICU 1:2, 1:1 devices separate)</p>
+                    </div>
+                  </div>
+                  {staffingPredictions.totals && (
+                    <div className="flex gap-6 text-sm">
+                      <div>
+                        <span className="text-slate-400">1:1 Patients:</span>
+                        <span className="ml-2 text-orange-400 font-bold">{staffingPredictions.totals.totalOneToOne}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">AM Total RNs:</span>
+                        <span className="ml-2 text-yellow-400 font-bold">{staffingPredictions.totals.amTotalRn}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">PM Total RNs:</span>
+                        <span className="ml-2 text-indigo-400 font-bold">{staffingPredictions.totals.pmTotalRn}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {/* AM Shift Panel */}
+                  <div className="bg-slate-700/50 rounded-lg p-4">
+                    <h3 className="text-yellow-400 font-medium mb-3 flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                      </svg>
+                      AM Shift (7a-7p)
+                    </h3>
+                    <div className="space-y-2">
+                      {staffingPredictions.predictions.map((pred) => (
+                        <div key={`am-${pred.unitName}`} className="flex justify-between items-center py-2 border-b border-slate-600 last:border-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                              pred.unitType === "icu" ? "bg-red-900/50 text-red-300" : "bg-blue-900/50 text-blue-300"
+                            }`}>
+                              {pred.unitType.toUpperCase()}
+                            </span>
+                            <span className="text-white text-sm">{pred.unitName}</span>
+                          </div>
+                          <div className="text-right flex items-center gap-3">
+                            <span className="text-slate-400 text-xs">{pred.currentPatients} pts</span>
+                            <span className="text-emerald-400 font-bold">{pred.amShift.totalRnNeeded}</span>
+                            <span className="text-slate-400 text-xs">RNs</span>
+                            {pred.amShift.oneToOneRnNeeded > 0 && (
+                              <span className="text-orange-400 text-xs">({pred.amShift.oneToOneRnNeeded} 1:1)</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* PM Shift Panel */}
+                  <div className="bg-slate-700/50 rounded-lg p-4">
+                    <h3 className="text-indigo-400 font-medium mb-3 flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                      </svg>
+                      PM Shift (7p-7a)
+                    </h3>
+                    <div className="space-y-2">
+                      {staffingPredictions.predictions.map((pred) => (
+                        <div key={`pm-${pred.unitName}`} className="flex justify-between items-center py-2 border-b border-slate-600 last:border-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                              pred.unitType === "icu" ? "bg-red-900/50 text-red-300" : "bg-blue-900/50 text-blue-300"
+                            }`}>
+                              {pred.unitType.toUpperCase()}
+                            </span>
+                            <span className="text-white text-sm">{pred.unitName}</span>
+                          </div>
+                          <div className="text-right flex items-center gap-3">
+                            <span className="text-slate-400 text-xs">{pred.pmShift.endOfShiftCensus} pts</span>
+                            <span className="text-emerald-400 font-bold">{pred.pmShift.totalRnNeeded}</span>
+                            <span className="text-slate-400 text-xs">RNs</span>
+                            {pred.pmShift.oneToOneRnNeeded > 0 && (
+                              <span className="text-orange-400 text-xs">({pred.pmShift.oneToOneRnNeeded} 1:1)</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 1:1 Patients Summary */}
+                {staffingPredictions.totals && staffingPredictions.totals.totalOneToOne > 0 && (
+                  <div className="mt-4 bg-orange-900/20 border border-orange-700/50 rounded-lg p-4">
+                    <h4 className="text-orange-400 font-medium mb-2 flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      1:1 Nursing Required ({staffingPredictions.totals.totalOneToOne} patients)
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                      {staffingPredictions.predictions
+                        .filter(p => p.oneToOnePatients > 0)
+                        .map(pred => (
+                          <span key={pred.unitName} className="px-3 py-1 bg-orange-900/30 rounded text-sm">
+                            <span className="text-orange-300">{pred.unitName}:</span>
+                            <span className="text-white ml-1">{pred.oneToOnePatients} pts</span>
+                            {pred.oneToOneDevices && pred.oneToOneDevices.length > 0 && (
+                              <span className="text-orange-400 ml-1">({[...new Set(pred.oneToOneDevices)].join(", ")})</span>
+                            )}
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Patient Table */}
             <div className="bg-slate-800 rounded-lg overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
@@ -408,6 +540,9 @@ export default function CensusPage() {
                         Unit
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-slate-300 uppercase">
+                        1:1
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-300 uppercase">
                         Admit Date
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-slate-300 uppercase">
@@ -427,13 +562,13 @@ export default function CensusPage() {
                   <tbody className="divide-y divide-slate-700">
                     {patients === undefined ? (
                       <tr>
-                        <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                        <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
                           Loading...
                         </td>
                       </tr>
                     ) : patients.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                        <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
                           No patients found
                         </td>
                       </tr>
@@ -464,6 +599,28 @@ export default function CensusPage() {
                             >
                               {patient.currentUnitName}
                             </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            {patient.requiresOneToOne ? (
+                              <div className="flex flex-wrap gap-1">
+                                {patient.oneToOneDevices && patient.oneToOneDevices.length > 0 ? (
+                                  patient.oneToOneDevices.map((device: string, idx: number) => (
+                                    <span
+                                      key={idx}
+                                      className="px-2 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300"
+                                    >
+                                      {device}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded text-xs font-medium bg-orange-900/50 text-orange-300">
+                                    1:1
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-500">—</span>
+                            )}
                           </td>
                           <td className="px-4 py-3 text-slate-300">
                             {formatDate(patient.admissionDate)}

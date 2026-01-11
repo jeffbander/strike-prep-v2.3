@@ -725,6 +725,35 @@ export default defineSchema({
     // Additional tracking
     attendingDoctor: v.optional(v.string()),
 
+    // Patient status lifecycle
+    patientStatus: v.string(), // "active" | "discharged"
+    dischargedAt: v.optional(v.number()), // Timestamp when marked discharged
+    lastSeenImportId: v.optional(v.id("census_imports")), // Track which import last saw this patient
+
+    // Demographics (from CSV columns)
+    sex: v.optional(v.string()), // Column C
+    dob: v.optional(v.string()), // Column D (YYYY-MM-DD)
+    age: v.optional(v.number()), // Column E
+    language: v.optional(v.string()), // Column J
+    csn: v.optional(v.string()), // Column L - Contact Serial Number
+
+    // Location (can change between uploads)
+    room: v.optional(v.string()), // Column H
+    bed: v.optional(v.string()), // Column I
+
+    // 1:1 Nursing detection
+    requiresOneToOne: v.boolean(), // True if ECMO/CVVH/Impella/IABP detected
+    oneToOneDevices: v.optional(v.array(v.string())), // ["ECMO", "Impella"] etc.
+    oneToOneSource: v.optional(v.string()), // "keyword" | "ai" | "both"
+
+    // AI input columns from CSV
+    dischargeToday: v.optional(v.string()), // Column O - "Yes"/"No"/"Possible"
+    rawGeneralComments: v.optional(v.string()), // Column Q - unstructured clinical notes
+
+    // Predicted downgrade (for ICU patients)
+    predictedDowngradeDate: v.optional(v.string()), // When ICU patient likely moves to floor
+    predictedDowngradeUnit: v.optional(v.string()), // Target floor unit (e.g., "7C")
+
     // Retention (3-day rolling window)
     expiresAt: v.number(), // Timestamp for cleanup (now + 3 days)
 
@@ -738,7 +767,9 @@ export default defineSchema({
     .index("by_unit", ["hospitalId", "currentUnitName"])
     .index("by_census_date", ["hospitalId", "censusDate"])
     .index("by_unit_type", ["hospitalId", "unitType"])
-    .index("by_expires_at", ["expiresAt"]), // For cleanup job
+    .index("by_expires_at", ["expiresAt"]) // For cleanup job
+    .index("by_patient_status", ["hospitalId", "patientStatus"])
+    .index("by_requires_one_to_one", ["hospitalId", "requiresOneToOne"]),
 
   // ═══════════════════════════════════════════════════════════════════
   // CENSUS PATIENT HISTORY

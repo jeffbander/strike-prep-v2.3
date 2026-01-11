@@ -32,11 +32,13 @@ export default function CensusImport({
   const [importResult, setImportResult] = useState<{
     created: number;
     updated: number;
+    discharged: number;
     errors: string[];
   } | null>(null);
 
   const createImport = useMutation(api.census.createImport);
   const upsertPatients = useMutation(api.census.upsertPatients);
+  const markDischargedPatients = useMutation(api.census.markDischargedPatients);
 
   const handleFileSelect = useCallback(async (file: File) => {
     try {
@@ -89,7 +91,7 @@ export default function CensusImport({
         uploadDate: parseResult.censusDate,
       });
 
-      // Flatten all patients from all sheets
+      // Flatten all patients from all sheets with all fields
       const allPatients: Array<{
         mrn: string;
         patientName: string;
@@ -99,14 +101,34 @@ export default function CensusImport({
         service?: string;
         losDays?: number;
         attendingDoctor?: string;
+        // Demographics
+        sex?: string;
+        dob?: string;
+        age?: number;
+        language?: string;
+        csn?: string;
+        // Location
+        room?: string;
+        bed?: string;
+        // 1:1 Nursing
+        requiresOneToOne: boolean;
+        oneToOneDevices?: string[];
+        // AI input
+        dischargeToday?: string;
+        rawGeneralComments?: string;
+        // AI-generated fields
         primaryDiagnosis?: string;
         clinicalStatus?: string;
         dispositionConsiderations?: string;
         projectedDischargeDays?: number;
       }> = [];
 
+      // Collect all MRNs for discharge marking
+      const allMrns: string[] = [];
+
       for (const sheet of parseResult.sheets) {
         for (const patient of sheet.patients) {
+          allMrns.push(patient.mrn);
           allPatients.push({
             mrn: patient.mrn,
             patientName: patient.patientName,
@@ -116,6 +138,22 @@ export default function CensusImport({
             service: patient.service,
             losDays: patient.losDays,
             attendingDoctor: patient.attendingDoctor,
+            // Demographics
+            sex: patient.sex,
+            dob: patient.dob,
+            age: patient.age,
+            language: patient.language,
+            csn: patient.csn,
+            // Location
+            room: patient.room,
+            bed: patient.bed,
+            // 1:1 Nursing
+            requiresOneToOne: patient.requiresOneToOne,
+            oneToOneDevices: patient.oneToOneDevices,
+            // AI input
+            dischargeToday: patient.dischargeStatus,
+            rawGeneralComments: patient.rawGeneralComments,
+            // AI-generated fields
             primaryDiagnosis: patient.primaryDiagnosis,
             clinicalStatus: patient.clinicalStatus,
             dispositionConsiderations: patient.dispositionConsiderations,
@@ -142,16 +180,26 @@ export default function CensusImport({
         allErrors.push(...result.errors);
       }
 
+      // Mark patients not in this import as discharged
+      const dischargeResult = await markDischargedPatients({
+        importId,
+        currentMrns: allMrns,
+      });
+
       setImportResult({
         created: totalCreated,
         updated: totalUpdated,
+        discharged: dischargeResult.dischargedCount,
         errors: [...parseResult.errors, ...allErrors],
       });
 
       setStep("result");
 
       if (totalCreated + totalUpdated > 0) {
-        toast.success(`Imported ${totalCreated + totalUpdated} patients`);
+        const dischargeMsg = dischargeResult.dischargedCount > 0
+          ? `, ${dischargeResult.dischargedCount} discharged`
+          : "";
+        toast.success(`Imported ${totalCreated + totalUpdated} patients${dischargeMsg}`);
         onImportComplete?.();
       }
     } catch (error) {
@@ -362,7 +410,10 @@ export default function CensusImport({
                 </div>
                 <h3 className="text-xl font-semibold text-white mb-2">Import Complete</h3>
                 <p className="text-slate-400">
-                  {importResult.created} new patients, {importResult.updated} updated
+                  {importResult.created} new, {importResult.updated} updated
+                  {importResult.discharged > 0 && (
+                    <span className="text-orange-400">, {importResult.discharged} discharged</span>
+                  )}
                 </p>
               </div>
 

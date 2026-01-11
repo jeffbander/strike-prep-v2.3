@@ -20,6 +20,12 @@ export interface CensusPatient {
   admissionDate: string;
   losDays?: number;
   attendingDoctor?: string;
+  // Demographics from CSV
+  sex?: string;
+  dob?: string;
+  age?: number;
+  language?: string;
+  csn?: string;
   // AI-generated fields (may be pre-populated in structured imports)
   primaryDiagnosis?: string;
   clinicalStatus?: string;
@@ -27,10 +33,14 @@ export interface CensusPatient {
   projectedDischargeDays?: number;
   // For AI processing workflow
   rawClinicalNotes?: string;
+  rawGeneralComments?: string; // Column Q - unstructured clinical notes
   // Additional fields from source
   dischargeStatus?: string; // "Definite", "Possible", "> 48 Hours", etc.
   room?: string;
   bed?: string;
+  // 1:1 Nursing detection
+  requiresOneToOne: boolean;
+  oneToOneDevices: string[];
 }
 
 export interface CensusSheet {
@@ -71,7 +81,16 @@ const COLUMN_PATTERNS = {
   dischargeToday: ["discharge today", "discharge today?", "dc today", "dispo", "discharge status"],
   room: ["room", "rm"],
   bed: ["bed"],
+  // New demographic columns
+  sex: ["sex", "gender"],
+  dob: ["dob", "date of birth", "birth date", "birthdate"],
+  age: ["age", "years"],
+  language: ["language", "lang", "preferred language"],
+  csn: ["csn", "contact serial", "encounter"],
 };
+
+// 1:1 Nursing detection keywords (NOT ventilator - that doesn't require 1:1)
+const ONE_TO_ONE_KEYWORDS = ["ECMO", "CVVH", "IMPELLA", "IABP"];
 
 // Map discharge status to projected days
 const DISCHARGE_STATUS_TO_DAYS: Record<string, number> = {
@@ -93,6 +112,24 @@ const DISCHARGE_STATUS_TO_DAYS: Record<string, number> = {
 export function detectUnitType(unitName: string): "icu" | "floor" {
   const upperName = unitName.toUpperCase();
   return ICU_PATTERNS.some((pattern) => upperName.includes(pattern)) ? "icu" : "floor";
+}
+
+/**
+ * Detect 1:1 nursing devices in clinical text
+ * Returns array of detected device names (ECMO, CVVH, Impella, IABP)
+ * NOTE: Ventilator/intubation does NOT require 1:1 nursing
+ */
+export function detectOneToOneDevices(text: string): string[] {
+  if (!text) return [];
+  const upperText = text.toUpperCase();
+  return ONE_TO_ONE_KEYWORDS.filter((keyword) => upperText.includes(keyword));
+}
+
+/**
+ * Check if patient requires 1:1 nursing based on clinical text
+ */
+export function requiresOneToOneNursing(text: string): boolean {
+  return detectOneToOneDevices(text).length > 0;
 }
 
 /**
@@ -271,6 +308,12 @@ export function parseCensusExcel(data: ArrayBuffer): CensusParseResult {
       dischargeToday: findColumnName(headers, COLUMN_PATTERNS.dischargeToday),
       room: findColumnName(headers, COLUMN_PATTERNS.room),
       bed: findColumnName(headers, COLUMN_PATTERNS.bed),
+      // New demographic columns
+      sex: findColumnName(headers, COLUMN_PATTERNS.sex),
+      dob: findColumnName(headers, COLUMN_PATTERNS.dob),
+      age: findColumnName(headers, COLUMN_PATTERNS.age),
+      language: findColumnName(headers, COLUMN_PATTERNS.language),
+      csn: findColumnName(headers, COLUMN_PATTERNS.csn),
     };
 
     // Validate required columns
@@ -344,6 +387,27 @@ export function parseCensusExcel(data: ArrayBuffer): CensusParseResult {
           ? String(row[columns.generalComments] || "").trim() || undefined
           : undefined;
 
+        // Detect 1:1 nursing requirements from clinical notes
+        // Check both primary diagnosis and general comments for ECMO, CVVH, Impella, IABP
+        const clinicalText = [primaryDiagnosis || "", generalComments || ""].join(" ");
+        const oneToOneDevices = detectOneToOneDevices(clinicalText);
+        const requiresOneToOne = oneToOneDevices.length > 0;
+
+        // Extract demographics
+        const sex = columns.sex
+          ? String(row[columns.sex] || "").trim() || undefined
+          : undefined;
+        const dob = columns.dob ? normalizeDate(row[columns.dob]) || undefined : undefined;
+        const age = columns.age
+          ? parseInt(String(row[columns.age] || ""), 10) || undefined
+          : undefined;
+        const language = columns.language
+          ? String(row[columns.language] || "").trim() || undefined
+          : undefined;
+        const csn = columns.csn
+          ? String(row[columns.csn] || "").trim() || undefined
+          : undefined;
+
         const patient: CensusPatient = {
           mrn,
           patientName,
@@ -358,9 +422,17 @@ export function parseCensusExcel(data: ArrayBuffer): CensusParseResult {
           attendingDoctor: columns.attending
             ? String(row[columns.attending] || "").trim() || undefined
             : undefined,
+          // Demographics
+          sex,
+          dob,
+          age,
+          language,
+          csn,
+          // Clinical data
           primaryDiagnosis,
           clinicalStatus: generalComments,
           rawClinicalNotes: generalComments,
+          rawGeneralComments: generalComments,
           dischargeStatus,
           projectedDischargeDays,
           room: columns.room
@@ -369,6 +441,9 @@ export function parseCensusExcel(data: ArrayBuffer): CensusParseResult {
           bed: columns.bed
             ? String(row[columns.bed] || "").trim() || undefined
             : undefined,
+          // 1:1 Nursing detection
+          requiresOneToOne,
+          oneToOneDevices,
         };
 
         // Group by unit
