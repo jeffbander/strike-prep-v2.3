@@ -736,11 +736,16 @@ export default defineSchema({
 
     // Status tracking
     patientStatus: v.optional(v.string()), // active, discharged, etc.
+    dischargedAt: v.optional(v.number()), // Timestamp when marked discharged
     dischargeToday: v.optional(v.string()), // Discharge timeline indicator
     rawGeneralComments: v.optional(v.string()), // Original comments before AI processing
     requiresOneToOne: v.optional(v.boolean()),
     oneToOneDevices: v.optional(v.array(v.string())),
     oneToOneSource: v.optional(v.string()), // Source of 1:1 requirement (e.g., "keyword")
+
+    // Predicted downgrade (for ICU patients)
+    predictedDowngradeDate: v.optional(v.string()), // When ICU patient likely moves to floor
+    predictedDowngradeUnit: v.optional(v.string()), // Target floor unit
 
     // Import tracking
     lastSeenImportId: v.optional(v.id("census_imports")),
@@ -758,7 +763,9 @@ export default defineSchema({
     .index("by_unit", ["hospitalId", "currentUnitName"])
     .index("by_census_date", ["hospitalId", "censusDate"])
     .index("by_unit_type", ["hospitalId", "unitType"])
-    .index("by_expires_at", ["expiresAt"]), // For cleanup job
+    .index("by_expires_at", ["expiresAt"]) // For cleanup job
+    .index("by_patient_status", ["hospitalId", "patientStatus"])
+    .index("by_requires_one_to_one", ["hospitalId", "requiresOneToOne"]),
 
   // ═══════════════════════════════════════════════════════════════════
   // CENSUS PATIENT HISTORY
