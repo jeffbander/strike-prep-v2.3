@@ -721,6 +721,7 @@ export default defineSchema({
     dispositionConsiderations: v.optional(v.string()), // Trajectory, barriers, timeline
     pendingProcedures: v.optional(v.string()), // Scheduled procedures, tests, consults
     projectedDischargeDays: v.optional(v.number()), // Integer: days until discharge
+    losReasoning: v.optional(v.string()), // AI explanation of LOS prediction
 
     // Additional tracking
     attendingDoctor: v.optional(v.string()),
@@ -818,6 +819,53 @@ export default defineSchema({
   })
     .index("by_hospital", ["hospitalId"])
     .index("by_raw_name", ["hospitalId", "rawUnitName"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // SCHEDULED PROCEDURES (Stub for future OR/EP/Cath Lab integration)
+  // Will feed into census forecast as predicted admits
+  // ═══════════════════════════════════════════════════════════════════
+
+  scheduled_procedures: defineTable({
+    hospitalId: v.id("hospitals"),
+
+    // Procedure details
+    procedureType: v.string(), // "OR" | "EP" | "Cath Lab"
+    procedureName: v.optional(v.string()),
+    surgeonName: v.optional(v.string()),
+
+    // Scheduling
+    scheduledDate: v.string(), // ISO date
+    scheduledTime: v.optional(v.string()), // "08:00"
+    estimatedDurationMinutes: v.optional(v.number()),
+
+    // Patient tracking (PHI-minimized)
+    mrn: v.optional(v.string()), // Link to census patient if exists
+    patientInitials: v.optional(v.string()),
+
+    // AI-predicted disposition
+    predictedAdmission: v.boolean(), // true = admit, false = same-day discharge
+    expectedDestination: v.string(), // "ICU" | "Floor" | "Same Day Discharge"
+    expectedUnitName: v.optional(v.string()), // Target unit (e.g., "CSIU", "7W")
+    expectedIcuDays: v.optional(v.number()), // If ICU first, how many days
+    expectedFloorDays: v.optional(v.number()), // Total floor days
+    admissionReasoning: v.optional(v.string()), // AI explanation
+
+    // Status
+    status: v.string(), // "Scheduled" | "In Progress" | "Completed" | "Cancelled"
+
+    // Linked service (if procedure service configured)
+    serviceId: v.optional(v.id("services")),
+
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    isActive: v.boolean(),
+  })
+    .index("by_hospital", ["hospitalId"])
+    .index("by_date", ["scheduledDate"])
+    .index("by_hospital_date", ["hospitalId", "scheduledDate"])
+    .index("by_type", ["procedureType"])
+    .index("by_status", ["status"])
+    .index("by_destination", ["expectedDestination"]),
 
   // ═══════════════════════════════════════════════════════════════════
   // AMION IMPORTS

@@ -6,6 +6,7 @@ import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import Link from "next/link";
 import CensusImport from "@/components/census/CensusImport";
+import CensusForecastChart from "@/components/census/CensusForecastChart";
 
 export default function CensusPage() {
   const currentUser = useQuery(api.users.getCurrentUser);
@@ -17,6 +18,7 @@ export default function CensusPage() {
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [selectedPatientMrn, setSelectedPatientMrn] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [selectedForecastUnit, setSelectedForecastUnit] = useState<string>("");
 
   const generatePredictions = useAction(api.censusAI.generatePredictions);
 
@@ -58,6 +60,12 @@ export default function CensusPage() {
   // Staffing predictions query
   const staffingPredictions = useQuery(
     api.census.getStaffingPredictions,
+    effectiveHospitalId ? { hospitalId: effectiveHospitalId } : "skip"
+  );
+
+  // Census forecast query
+  const censusForecast = useQuery(
+    api.census.getCensusForecast,
     effectiveHospitalId ? { hospitalId: effectiveHospitalId } : "skip"
   );
 
@@ -508,6 +516,15 @@ export default function CensusPage() {
               </div>
             )}
 
+            {/* 5-Day Census Forecast */}
+            {censusForecast && censusForecast.forecast.length > 0 && (
+              <CensusForecastChart
+                forecast={censusForecast.forecast}
+                selectedUnit={selectedForecastUnit}
+                onUnitSelect={setSelectedForecastUnit}
+              />
+            )}
+
             {/* Patient Table */}
             <div className="bg-slate-800 rounded-lg overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
@@ -740,6 +757,21 @@ export default function CensusPage() {
                           <p className="text-slate-400 text-sm mb-1">Pending Procedures</p>
                           <p className="bg-slate-700/50 rounded p-3">
                             {patient.pendingProcedures}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* AI LOS Reasoning */}
+                      {patient.losReasoning && (
+                        <div className="mb-4">
+                          <p className="text-slate-400 text-sm mb-1 flex items-center gap-2">
+                            <svg className="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                            </svg>
+                            AI Length of Stay Reasoning
+                          </p>
+                          <p className="bg-purple-900/30 border border-purple-700/50 rounded p-3 text-purple-100">
+                            {patient.losReasoning}
                           </p>
                         </div>
                       )}

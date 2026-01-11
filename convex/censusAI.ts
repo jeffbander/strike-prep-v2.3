@@ -25,6 +25,7 @@ For each patient in the input, provide predictions in the following JSON format:
   "dispositionConsiderations": "Trajectory (Improving/Stable/Worsening/Critical), Barriers, Downgrade potential, Est ICU stay",
   "pendingProcedures": "List all scheduled or pending procedures, tests, and consults that are barriers to discharge or part of the care plan. Include: scheduled surgeries or interventions (with date if known), pending imaging (CT, MRI, Echo, CTA), pending lab results (pathology, cultures), pending consults (EP, GI, PT/OT), procedures in planning phase. Write 'None' if no pending procedures. Examples: 'OR CABG tomorrow', 'PCI 1/7', 'PPM today (possible)', 'CT head pending, RHC with vasoreactivity testing', 'Pathology results pending', 'EP consult, Event monitor placement', 'None'",
   "projectedDischargeDays": integer (1-3: imminent, 4-7: short, 8-14: extended, 15-21: prolonged, 21-30: very prolonged, 30+: unable to predict),
+  "losReasoning": "1-2 sentence explanation of WHY this patient will stay this long. Focus on the key clinical factors driving length of stay - e.g., 'Patient requires continued ventilator weaning and pressor support. Expected 5-7 more days until hemodynamically stable for floor transfer.'",
   "requiresOneToOne": boolean (true if patient has ECMO, CVVH, Impella, or IABP),
   "oneToOneDevices": ["ECMO", "Impella"] (array of detected devices, empty array if none),
   "predictedDowngrade": {
@@ -61,6 +62,7 @@ For each patient in the input, provide predictions in the following JSON format:
   "dispositionConsiderations": "Destination (Home/SAR/SNF/LTACH), Barriers (placement/insurance/PT clearance), Requirements (VNA/O2/equipment)",
   "pendingProcedures": "List all scheduled or pending procedures, tests, and consults that are barriers to discharge or part of the care plan. Include: scheduled surgeries or interventions (with date if known), pending imaging (CT, MRI, Echo, CTA), pending lab results (pathology, cultures), pending consults (EP, GI, PT/OT), procedures in planning phase. Write 'None' if no pending procedures. Examples: 'OR CABG tomorrow', 'PCI 1/7', 'PPM today (possible)', 'CT head pending, RHC with vasoreactivity testing', 'Pathology results pending', 'EP consult, Event monitor placement', 'None'",
   "projectedDischargeDays": integer,
+  "losReasoning": "1-2 sentence explanation of WHY this patient will stay this long. Focus on key discharge barriers - e.g., 'Awaiting SNF placement and PT clearance for safe discharge. Insurance approval expected in 2-3 days.'",
   "requiresOneToOne": false,
   "oneToOneDevices": []
 }
@@ -130,6 +132,7 @@ interface PatientPrediction {
   dispositionConsiderations?: string;
   pendingProcedures?: string;
   projectedDischargeDays?: number;
+  losReasoning?: string; // AI explanation of LOS prediction
   // 1:1 Nursing detection
   requiresOneToOne?: boolean;
   oneToOneDevices?: string[];
@@ -227,6 +230,7 @@ export const generatePredictions = action({
                   dispositionConsiderations: pred.dispositionConsiderations,
                   pendingProcedures: pred.pendingProcedures,
                   projectedDischargeDays: pred.projectedDischargeDays,
+                  losReasoning: pred.losReasoning,
                   // 1:1 Nursing detection
                   requiresOneToOne: pred.requiresOneToOne,
                   oneToOneDevices: pred.oneToOneDevices,
@@ -259,6 +263,7 @@ export const generatePredictions = action({
                   dispositionConsiderations: pred.dispositionConsiderations,
                   pendingProcedures: pred.pendingProcedures,
                   projectedDischargeDays: pred.projectedDischargeDays,
+                  losReasoning: pred.losReasoning,
                   // Floor patients don't typically need 1:1
                   requiresOneToOne: false,
                   oneToOneDevices: [],
@@ -413,6 +418,7 @@ export const processSinglePatient = action({
             dispositionConsiderations: predictions[0].dispositionConsiderations,
             pendingProcedures: predictions[0].pendingProcedures,
             projectedDischargeDays: predictions[0].projectedDischargeDays,
+            losReasoning: predictions[0].losReasoning,
           },
         });
         return { success: true };

@@ -565,6 +565,7 @@ export const updatePatientPredictions = internalMutation({
       dispositionConsiderations: v.optional(v.string()),
       pendingProcedures: v.optional(v.string()),
       projectedDischargeDays: v.optional(v.number()),
+      losReasoning: v.optional(v.string()), // AI explanation of LOS prediction
       // 1:1 Nursing detection
       requiresOneToOne: v.optional(v.boolean()),
       oneToOneDevices: v.optional(v.array(v.string())),
@@ -895,6 +896,130 @@ export const getStaffingPredictions = query({
     return {
       predictions,
       totals,
+      censusDate: latestImport.uploadDate,
+      importedAt: latestImport.importedAt,
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// 5-DAY CENSUS FORECAST
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Get 5-day census forecast per unit
+ * Calculates projected census based on discharge predictions and ICU downgrades
+ */
+export const getCensusForecast = query({
+  args: {
+    hospitalId: v.id("hospitals"),
+  },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx);
+    await requireHospitalAccess(ctx, args.hospitalId);
+
+    const latestImport = await ctx.db
+      .query("census_imports")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .order("desc")
+      .first();
+
+    if (!latestImport) {
+      return { forecast: [], censusDate: null, importedAt: null };
+    }
+
+    // Get active patients
+    const patients = await ctx.db
+      .query("census_patients")
+      .withIndex("by_patient_status", (q) =>
+        q.eq("hospitalId", args.hospitalId).eq("patientStatus", "active")
+      )
+      .collect();
+
+    if (patients.length === 0) {
+      return { forecast: [], censusDate: latestImport.uploadDate, importedAt: latestImport.importedAt };
+    }
+
+    // Group patients by unit
+    const unitMap = new Map<
+      string,
+      {
+        unitName: string;
+        unitType: "icu" | "floor";
+        patients: typeof patients;
+      }
+    >();
+
+    for (const patient of patients) {
+      if (!unitMap.has(patient.currentUnitName)) {
+        unitMap.set(patient.currentUnitName, {
+          unitName: patient.currentUnitName,
+          unitType: patient.unitType as "icu" | "floor",
+          patients: [],
+        });
+      }
+      unitMap.get(patient.currentUnitName)!.patients.push(patient);
+    }
+
+    // Calculate 5-day forecast for each unit
+    const forecast = Array.from(unitMap.values()).map((unit) => {
+      const days = [];
+      let runningCensus = unit.patients.length;
+
+      for (let day = 0; day <= 5; day++) {
+        // Count discharges on this day (patients with projectedDischargeDays == day)
+        const dischargesOnDay = unit.patients.filter(
+          (p) => p.projectedDischargeDays === day
+        ).length;
+
+        // Count ICU downgrades (step-downs to floor) - only for ICU units
+        let downgradesOnDay = 0;
+        if (unit.unitType === "icu") {
+          const targetDate = new Date();
+          targetDate.setDate(targetDate.getDate() + day);
+          const targetDateStr = targetDate.toISOString().split("T")[0];
+
+          downgradesOnDay = unit.patients.filter(
+            (p) => p.predictedDowngradeDate === targetDateStr
+          ).length;
+        }
+
+        // Stub for future: predicted admits from scheduled procedures
+        const predictedAdmits = 0;
+
+        // Calculate net change and running census
+        if (day > 0) {
+          const netChange = predictedAdmits - dischargesOnDay - downgradesOnDay;
+          runningCensus = Math.max(0, runningCensus + netChange);
+        }
+
+        days.push({
+          day,
+          date: new Date(Date.now() + day * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+          projectedCensus: day === 0 ? unit.patients.length : runningCensus,
+          predictedDischarges: dischargesOnDay,
+          predictedDowngrades: downgradesOnDay,
+          predictedAdmits,
+          netChange: day === 0 ? 0 : predictedAdmits - dischargesOnDay - downgradesOnDay,
+        });
+      }
+
+      return {
+        unitName: unit.unitName,
+        unitType: unit.unitType,
+        currentCensus: unit.patients.length,
+        days,
+      };
+    });
+
+    // Sort: ICUs first, then by current census
+    forecast.sort((a, b) => {
+      if (a.unitType !== b.unitType) return a.unitType === "icu" ? -1 : 1;
+      return b.currentCensus - a.currentCensus;
+    });
+
+    return {
+      forecast,
       censusDate: latestImport.uploadDate,
       importedAt: latestImport.importedAt,
     };
