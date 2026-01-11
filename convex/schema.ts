@@ -721,39 +721,29 @@ export default defineSchema({
     dispositionConsiderations: v.optional(v.string()), // Trajectory, barriers, timeline
     pendingProcedures: v.optional(v.string()), // Scheduled procedures, tests, consults
     projectedDischargeDays: v.optional(v.number()), // Integer: days until discharge
-    losReasoning: v.optional(v.string()), // AI explanation of LOS prediction
 
     // Additional tracking
     attendingDoctor: v.optional(v.string()),
 
-    // Patient status lifecycle
-    patientStatus: v.string(), // "active" | "discharged"
-    dischargedAt: v.optional(v.number()), // Timestamp when marked discharged
-    lastSeenImportId: v.optional(v.id("census_imports")), // Track which import last saw this patient
+    // Demographics & Location Details
+    age: v.optional(v.number()),
+    dob: v.optional(v.string()), // Date of birth
+    sex: v.optional(v.string()), // M/F
+    language: v.optional(v.string()),
+    room: v.optional(v.string()),
+    bed: v.optional(v.string()),
+    csn: v.optional(v.string()), // Contact Serial Number
 
-    // Demographics (from CSV columns)
-    sex: v.optional(v.string()), // Column C
-    dob: v.optional(v.string()), // Column D (YYYY-MM-DD)
-    age: v.optional(v.number()), // Column E
-    language: v.optional(v.string()), // Column J
-    csn: v.optional(v.string()), // Column L - Contact Serial Number
+    // Status tracking
+    patientStatus: v.optional(v.string()), // active, discharged, etc.
+    dischargeToday: v.optional(v.string()), // Discharge timeline indicator
+    rawGeneralComments: v.optional(v.string()), // Original comments before AI processing
+    requiresOneToOne: v.optional(v.boolean()),
+    oneToOneDevices: v.optional(v.array(v.string())),
+    oneToOneSource: v.optional(v.string()), // Source of 1:1 requirement (e.g., "keyword")
 
-    // Location (can change between uploads)
-    room: v.optional(v.string()), // Column H
-    bed: v.optional(v.string()), // Column I
-
-    // 1:1 Nursing detection
-    requiresOneToOne: v.boolean(), // True if ECMO/CVVH/Impella/IABP detected
-    oneToOneDevices: v.optional(v.array(v.string())), // ["ECMO", "Impella"] etc.
-    oneToOneSource: v.optional(v.string()), // "keyword" | "ai" | "both"
-
-    // AI input columns from CSV
-    dischargeToday: v.optional(v.string()), // Column O - "Yes"/"No"/"Possible"
-    rawGeneralComments: v.optional(v.string()), // Column Q - unstructured clinical notes
-
-    // Predicted downgrade (for ICU patients)
-    predictedDowngradeDate: v.optional(v.string()), // When ICU patient likely moves to floor
-    predictedDowngradeUnit: v.optional(v.string()), // Target floor unit (e.g., "7C")
+    // Import tracking
+    lastSeenImportId: v.optional(v.id("census_imports")),
 
     // Retention (3-day rolling window)
     expiresAt: v.number(), // Timestamp for cleanup (now + 3 days)
@@ -768,9 +758,7 @@ export default defineSchema({
     .index("by_unit", ["hospitalId", "currentUnitName"])
     .index("by_census_date", ["hospitalId", "censusDate"])
     .index("by_unit_type", ["hospitalId", "unitType"])
-    .index("by_expires_at", ["expiresAt"]) // For cleanup job
-    .index("by_patient_status", ["hospitalId", "patientStatus"])
-    .index("by_requires_one_to_one", ["hospitalId", "requiresOneToOne"]),
+    .index("by_expires_at", ["expiresAt"]), // For cleanup job
 
   // ═══════════════════════════════════════════════════════════════════
   // CENSUS PATIENT HISTORY
@@ -819,53 +807,6 @@ export default defineSchema({
   })
     .index("by_hospital", ["hospitalId"])
     .index("by_raw_name", ["hospitalId", "rawUnitName"]),
-
-  // ═══════════════════════════════════════════════════════════════════
-  // SCHEDULED PROCEDURES (Stub for future OR/EP/Cath Lab integration)
-  // Will feed into census forecast as predicted admits
-  // ═══════════════════════════════════════════════════════════════════
-
-  scheduled_procedures: defineTable({
-    hospitalId: v.id("hospitals"),
-
-    // Procedure details
-    procedureType: v.string(), // "OR" | "EP" | "Cath Lab"
-    procedureName: v.optional(v.string()),
-    surgeonName: v.optional(v.string()),
-
-    // Scheduling
-    scheduledDate: v.string(), // ISO date
-    scheduledTime: v.optional(v.string()), // "08:00"
-    estimatedDurationMinutes: v.optional(v.number()),
-
-    // Patient tracking (PHI-minimized)
-    mrn: v.optional(v.string()), // Link to census patient if exists
-    patientInitials: v.optional(v.string()),
-
-    // AI-predicted disposition
-    predictedAdmission: v.boolean(), // true = admit, false = same-day discharge
-    expectedDestination: v.string(), // "ICU" | "Floor" | "Same Day Discharge"
-    expectedUnitName: v.optional(v.string()), // Target unit (e.g., "CSIU", "7W")
-    expectedIcuDays: v.optional(v.number()), // If ICU first, how many days
-    expectedFloorDays: v.optional(v.number()), // Total floor days
-    admissionReasoning: v.optional(v.string()), // AI explanation
-
-    // Status
-    status: v.string(), // "Scheduled" | "In Progress" | "Completed" | "Cancelled"
-
-    // Linked service (if procedure service configured)
-    serviceId: v.optional(v.id("services")),
-
-    createdAt: v.number(),
-    updatedAt: v.number(),
-    isActive: v.boolean(),
-  })
-    .index("by_hospital", ["hospitalId"])
-    .index("by_date", ["scheduledDate"])
-    .index("by_hospital_date", ["hospitalId", "scheduledDate"])
-    .index("by_type", ["procedureType"])
-    .index("by_status", ["status"])
-    .index("by_destination", ["expectedDestination"]),
 
   // ═══════════════════════════════════════════════════════════════════
   // AMION IMPORTS
