@@ -7,6 +7,7 @@ import { Id } from "../../../../convex/_generated/dataModel";
 import Link from "next/link";
 import CensusImport from "@/components/census/CensusImport";
 import CensusForecastChart from "@/components/census/CensusForecastChart";
+import ProcedureImport from "@/components/procedures/ProcedureImport";
 
 export default function CensusPage() {
   const currentUser = useQuery(api.users.getCurrentUser);
@@ -19,6 +20,7 @@ export default function CensusPage() {
   const [selectedPatientMrn, setSelectedPatientMrn] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [selectedForecastUnit, setSelectedForecastUnit] = useState<string>("");
+  const [isProcedureImportOpen, setIsProcedureImportOpen] = useState(false);
 
   const generatePredictions = useAction(api.censusAI.generatePredictions);
 
@@ -516,14 +518,78 @@ export default function CensusPage() {
               </div>
             )}
 
-            {/* 5-Day Census Forecast */}
-            {censusForecast && censusForecast.forecast.length > 0 && (
-              <CensusForecastChart
-                forecast={censusForecast.forecast}
-                selectedUnit={selectedForecastUnit}
-                onUnitSelect={setSelectedForecastUnit}
-              />
-            )}
+            {/* 7-Day Census Forecast with Procedure Admissions */}
+            <div className="space-y-4">
+              {/* Instructions Card */}
+              <div className="bg-slate-800 rounded-lg p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-violet-600/20 rounded-lg flex items-center justify-center">
+                      <svg className="w-5 h-5 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold text-white">Procedure Schedule Import</h2>
+                      <p className="text-sm text-slate-400">
+                        Upload cath/EP lab CSV to forecast procedure-based admissions
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsProcedureImportOpen(true)}
+                    className="px-4 py-2 bg-violet-600 hover:bg-violet-700 rounded-lg transition-colors flex items-center gap-2 text-white"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    Import Procedures
+                  </button>
+                </div>
+
+                {/* Instructions */}
+                <div className="bg-slate-700/50 rounded-lg p-4">
+                  <h3 className="text-sm font-medium text-slate-300 mb-2">How Census Forecasting Works</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-slate-400 mb-2"><span className="text-emerald-400 font-medium">Step 1:</span> Import Census</p>
+                      <p className="text-slate-500">Upload daily patient census Excel from EMR. AI predicts LOS for each patient.</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 mb-2"><span className="text-violet-400 font-medium">Step 2:</span> Import Procedures</p>
+                      <p className="text-slate-500">Upload cath/EP lab schedule CSV. AI predicts which will admit + ICU/floor days.</p>
+                    </div>
+                  </div>
+                  {censusForecast && (
+                    <div className="mt-4 pt-3 border-t border-slate-600 flex gap-6 text-sm">
+                      <span className="text-slate-400">
+                        Current census: <span className="text-white font-medium">{censusSummary?.totalPatients || 0}</span>
+                      </span>
+                      <span className="text-slate-400">
+                        Procedure patients in forecast: <span className="text-violet-400 font-medium">{censusForecast.procedurePatientsTotal || 0}</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Forecast Chart */}
+              {censusForecast && censusForecast.forecast.length > 0 ? (
+                <CensusForecastChart
+                  forecast={censusForecast.forecast}
+                  selectedUnit={selectedForecastUnit}
+                  onUnitSelect={setSelectedForecastUnit}
+                />
+              ) : (
+                <div className="bg-slate-800 rounded-lg p-8 text-center text-slate-400">
+                  <svg className="w-12 h-12 mx-auto mb-3 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  <p>No forecast data available.</p>
+                  <p className="text-sm mt-1">Import census and procedure data to see predictions.</p>
+                </div>
+              )}
+            </div>
 
             {/* Patient Table */}
             <div className="bg-slate-800 rounded-lg overflow-hidden">
@@ -835,12 +901,24 @@ export default function CensusPage() {
           </div>
         )}
 
-        {/* Import Modal */}
+        {/* Census Import Modal */}
         {effectiveHospitalId && (
           <CensusImport
             hospitalId={effectiveHospitalId}
             isOpen={isImportOpen}
             onClose={() => setIsImportOpen(false)}
+            onImportComplete={() => {
+              // Data will auto-refresh via Convex queries
+            }}
+          />
+        )}
+
+        {/* Procedure Import Modal */}
+        {effectiveHospitalId && (
+          <ProcedureImport
+            hospitalId={effectiveHospitalId}
+            isOpen={isProcedureImportOpen}
+            onClose={() => setIsProcedureImportOpen(false)}
             onImportComplete={() => {
               // Data will auto-refresh via Convex queries
             }}
