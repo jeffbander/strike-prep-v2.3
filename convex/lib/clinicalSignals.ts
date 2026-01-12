@@ -212,9 +212,28 @@ export function estimateHospitalDischargeDays(signals: ClinicalSignals, downgrad
   if (signals.destination === 'snf') {
     return signals.pendingPlacement ? { days: 5, reasoning: "SNF pending" } : { days: 3, reasoning: "SNF in progress" };
   }
+  if (signals.destination === 'ltach') return { days: 7, reasoning: "LTACH placement" };
+  if (signals.destination === 'rehab') return { days: 4, reasoning: "Rehab placement" };
 
   if (signals.onHD) return { days: downgradeDays + 5, reasoning: "HD coordination" };
-  return { days: downgradeDays + 3, reasoning: "Typical recovery" };
+
+  // For floor patients with no complexity, use shorter estimates
+  if (!isICU) {
+    // Simple floor patient going home with no barriers
+    if (signals.destination === 'home' || signals.destination === null) {
+      // Check if there are ANY complexity signals
+      const hasComplexity = signals.onVent || signals.onHFNC || signals.onNIPPV ||
+        signals.onPressors || signals.onCRRT || signals.onHD || signals.activeInfection ||
+        signals.postTransplant || signals.awaitingTransplant;
+
+      if (!hasComplexity) {
+        return { days: 2, reasoning: "Stable floor patient, home discharge" };
+      }
+    }
+  }
+
+  // ICU patients or complex floor patients need recovery time
+  return { days: isICU ? downgradeDays + 3 : 3, reasoning: isICU ? "ICU recovery" : "Floor recovery" };
 }
 
 export function calculatePatientTrend(
