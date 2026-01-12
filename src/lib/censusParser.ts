@@ -213,7 +213,18 @@ function mapDischargeStatusToDays(status: string): number | undefined {
 
   // Check exact matches first
   for (const [key, days] of Object.entries(DISCHARGE_STATUS_TO_DAYS)) {
-    if (lower === key || lower.includes(key)) {
+    if (lower === key) {
+      return days;
+    }
+  }
+
+  // Then check partial matches, sorted by key length descending
+  // This ensures "> 48 hours (medically acute)" matches before "> 48 hours"
+  const sortedEntries = Object.entries(DISCHARGE_STATUS_TO_DAYS).sort(
+    (a, b) => b[0].length - a[0].length
+  );
+  for (const [key, days] of sortedEntries) {
+    if (lower.includes(key)) {
       return days;
     }
   }
