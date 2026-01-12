@@ -769,45 +769,112 @@ export const deactivateImport = mutation({
 
 /**
  * Clear all procedure data for a hospital (hard delete)
- * Use this to start fresh before a new import
+ * Uses action with batched mutations to avoid Convex write limits
  */
-export const clearAllProcedures = mutation({
+export const clearAllProcedures = action({
+  args: {
+    hospitalId: v.id("hospitals"),
+  },
+  handler: async (ctx, args): Promise<{ patientsDeleted: number; importsDeleted: number }> => {
+    // Get all patient and import IDs
+    const { patientIds, importIds } = await ctx.runQuery(
+      internal.procedures.getClearableIds,
+      { hospitalId: args.hospitalId }
+    );
+
+    const totalPatients = patientIds.length;
+    const totalImports = importIds.length;
+
+    // Delete patients in batches of 50
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < patientIds.length; i += BATCH_SIZE) {
+      const batch = patientIds.slice(i, i + BATCH_SIZE);
+      await ctx.runMutation(internal.procedures.deleteProcedureBatch, {
+        patientIds: batch,
+        importIds: [],
+      });
+    }
+
+    // Delete imports in one batch (usually just a few)
+    if (importIds.length > 0) {
+      await ctx.runMutation(internal.procedures.deleteProcedureBatch, {
+        patientIds: [],
+        importIds,
+      });
+    }
+
+    // Log the clear action
+    await ctx.runMutation(internal.procedures.logClearAction, {
+      hospitalId: args.hospitalId,
+      patientsDeleted: totalPatients,
+      importsDeleted: totalImports,
+    });
+
+    return {
+      patientsDeleted: totalPatients,
+      importsDeleted: totalImports,
+    };
+  },
+});
+
+/**
+ * Internal query to get IDs for clearing
+ */
+export const getClearableIds = internalQuery({
   args: {
     hospitalId: v.id("hospitals"),
   },
   handler: async (ctx, args) => {
-    const user = await requireAuth(ctx);
-    await requireHospitalAccess(ctx, args.hospitalId);
-
-    // Delete all procedure patients for this hospital
     const patients = await ctx.db
       .query("procedure_patients")
       .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
       .collect();
 
-    for (const patient of patients) {
-      await ctx.db.delete(patient._id);
-    }
-
-    // Delete all procedure imports for this hospital
     const imports = await ctx.db
       .query("procedure_imports")
       .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
       .collect();
 
-    for (const importRecord of imports) {
-      await ctx.db.delete(importRecord._id);
-    }
-
-    await auditLog(ctx, user, "CLEAR", "PROCEDURE_IMPORT", args.hospitalId, {
-      patientsDeleted: patients.length,
-      importsDeleted: imports.length,
-    });
-
     return {
-      patientsDeleted: patients.length,
-      importsDeleted: imports.length,
+      patientIds: patients.map((p) => p._id),
+      importIds: imports.map((i) => i._id),
     };
+  },
+});
+
+/**
+ * Internal mutation to delete a batch of procedures
+ */
+export const deleteProcedureBatch = internalMutation({
+  args: {
+    patientIds: v.array(v.id("procedure_patients")),
+    importIds: v.array(v.id("procedure_imports")),
+  },
+  handler: async (ctx, args) => {
+    for (const id of args.patientIds) {
+      await ctx.db.delete(id);
+    }
+    for (const id of args.importIds) {
+      await ctx.db.delete(id);
+    }
+  },
+});
+
+/**
+ * Internal mutation to log clear action
+ */
+export const logClearAction = internalMutation({
+  args: {
+    hospitalId: v.id("hospitals"),
+    patientsDeleted: v.number(),
+    importsDeleted: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    await auditLog(ctx, user, "CLEAR", "PROCEDURE_IMPORT", args.hospitalId, {
+      patientsDeleted: args.patientsDeleted,
+      importsDeleted: args.importsDeleted,
+    });
   },
 });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import Link from "next/link";
@@ -11,7 +11,7 @@ import ProcedureImport from "@/components/procedures/ProcedureImport";
 export default function ProceduresPage() {
   const currentUser = useQuery(api.users.getCurrentUser);
   const hospitals = useQuery(api.hospitals.list, {});
-  const clearAllProcedures = useMutation(api.procedures.clearAllProcedures);
+  const clearAllProcedures = useAction(api.procedures.clearAllProcedures);
 
   const [selectedHospitalId, setSelectedHospitalId] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>(() => {
