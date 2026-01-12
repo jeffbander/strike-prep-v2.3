@@ -119,6 +119,14 @@ function SuperAdminDashboard() {
             <h3 className="font-medium">Audit Logs</h3>
             <p className="text-sm text-slate-400">View system activity and changes</p>
           </a>
+          <a href="/dashboard/census" className="block p-4 bg-blue-700 hover:bg-blue-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Patient Census</h3>
+            <p className="text-sm text-blue-200">Import census data and view LOS predictions</p>
+          </a>
+          <a href="/dashboard/procedures" className="block p-4 bg-violet-700 hover:bg-violet-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Procedure Schedule</h3>
+            <p className="text-sm text-violet-200">Import cath/EP procedures and view bed forecasts</p>
+          </a>
         </div>
       </div>
     </div>
@@ -154,6 +162,14 @@ function HealthSystemAdminDashboard() {
           <a href="/dashboard/audit-logs" className="block p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
             <h3 className="font-medium">Audit Logs</h3>
             <p className="text-sm text-slate-400">View system activity and changes</p>
+          </a>
+          <a href="/dashboard/census" className="block p-4 bg-blue-700 hover:bg-blue-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Patient Census</h3>
+            <p className="text-sm text-blue-200">Import census data and view LOS predictions</p>
+          </a>
+          <a href="/dashboard/procedures" className="block p-4 bg-violet-700 hover:bg-violet-600 rounded-lg transition-colors">
+            <h3 className="font-medium">Procedure Schedule</h3>
+            <p className="text-sm text-violet-200">Import cath/EP procedures and view bed forecasts</p>
           </a>
         </div>
       </div>

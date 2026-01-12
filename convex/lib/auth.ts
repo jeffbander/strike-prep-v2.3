@@ -194,7 +194,8 @@ export type ResourceType =
   | "SCENARIO_ASSIGNMENT"
   | "PROVIDER_AVAILABILITY"
   | "LABOR_POOL"
-  | "CLAIM_TOKEN";
+  | "CLAIM_TOKEN"
+  | "PROCEDURE_IMPORT";
 
 export async function auditLog(
   ctx: MutationCtx,

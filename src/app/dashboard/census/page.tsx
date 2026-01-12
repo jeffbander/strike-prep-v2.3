@@ -63,10 +63,10 @@ export default function CensusPage() {
     effectiveHospitalId ? { hospitalId: effectiveHospitalId } : "skip"
   );
 
-  // Census forecast query
+  // Census forecast query (combined with procedure admissions)
   const censusForecast = useQuery(
-    api.census.getCensusForecast,
-    effectiveHospitalId ? { hospitalId: effectiveHospitalId } : "skip"
+    api.census.getCombinedForecast,
+    effectiveHospitalId ? { hospitalId: effectiveHospitalId, forecastDays: 7 } : "skip"
   );
 
   // Filter hospitals based on user's health system

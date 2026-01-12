@@ -18,7 +18,7 @@ interface ForecastDay {
   projectedCensus: number;
   predictedDischarges: number;
   predictedDowngrades: number;
-  predictedAdmits: number;
+  procedureAdmits: number; // Admits from scheduled procedures
   netChange: number;
 }
 
@@ -62,7 +62,7 @@ export default function CensusForecastChart({
           census: number;
           discharges: number;
           downgrades: number;
-          admits: number;
+          procedureAdmits: number;
         }
       >();
 
@@ -74,12 +74,12 @@ export default function CensusForecastChart({
             census: 0,
             discharges: 0,
             downgrades: 0,
-            admits: 0,
+            procedureAdmits: 0,
           };
           existing.census += dayData.projectedCensus;
           existing.discharges += dayData.predictedDischarges;
           existing.downgrades += dayData.predictedDowngrades;
-          existing.admits += dayData.predictedAdmits;
+          existing.procedureAdmits += dayData.procedureAdmits;
           dayMap.set(dayData.day, existing);
         }
       }
@@ -97,7 +97,7 @@ export default function CensusForecastChart({
       census: d.projectedCensus,
       discharges: d.predictedDischarges,
       downgrades: d.predictedDowngrades,
-      admits: d.predictedAdmits,
+      procedureAdmits: d.procedureAdmits,
     }));
   }, [forecast, selectedUnit]);
 
@@ -105,16 +105,19 @@ export default function CensusForecastChart({
   const summaryStats = useMemo(() => {
     if (chartData.length < 2) return null;
     const today = chartData[0];
-    const day5 = chartData[chartData.length - 1];
+    const lastDay = chartData[chartData.length - 1];
     const totalDischarges = chartData.reduce((sum, d) => sum + d.discharges, 0);
     const totalDowngrades = chartData.reduce((sum, d) => sum + d.downgrades, 0);
-    const netChange = day5.census - today.census;
+    const totalProcedureAdmits = chartData.reduce((sum, d) => sum + d.procedureAdmits, 0);
+    const netChange = lastDay.census - today.census;
 
     return {
       currentCensus: today.census,
-      projectedDay5: day5.census,
+      projectedLastDay: lastDay.census,
+      lastDayNum: chartData.length - 1,
       totalDischarges,
       totalDowngrades,
+      totalProcedureAdmits,
       netChange,
     };
   }, [chartData]);
@@ -163,9 +166,9 @@ export default function CensusForecastChart({
             </svg>
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-white">5-Day Census Forecast</h2>
+            <h2 className="text-lg font-semibold text-white">7-Day Census Forecast</h2>
             <p className="text-sm text-slate-400">
-              {selectedUnit || "All Units"} - Projected census based on discharge predictions
+              {selectedUnit || "All Units"} - Census + scheduled procedure admissions
             </p>
           </div>
         </div>
@@ -187,14 +190,14 @@ export default function CensusForecastChart({
 
       {/* Summary Stats */}
       {summaryStats && (
-        <div className="grid grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-6 gap-4 mb-6">
           <div className="bg-slate-700/50 rounded-lg p-3 text-center">
             <p className="text-slate-400 text-xs">Current</p>
             <p className="text-2xl font-bold text-white">{summaryStats.currentCensus}</p>
           </div>
           <div className="bg-slate-700/50 rounded-lg p-3 text-center">
-            <p className="text-slate-400 text-xs">Day 5 Projected</p>
-            <p className="text-2xl font-bold text-blue-400">{summaryStats.projectedDay5}</p>
+            <p className="text-slate-400 text-xs">Day {summaryStats.lastDayNum} Projected</p>
+            <p className="text-2xl font-bold text-blue-400">{summaryStats.projectedLastDay}</p>
           </div>
           <div className="bg-slate-700/50 rounded-lg p-3 text-center">
             <p className="text-slate-400 text-xs">Total Discharges</p>
@@ -203,6 +206,10 @@ export default function CensusForecastChart({
           <div className="bg-slate-700/50 rounded-lg p-3 text-center">
             <p className="text-slate-400 text-xs">ICU Downgrades</p>
             <p className="text-2xl font-bold text-amber-400">{summaryStats.totalDowngrades}</p>
+          </div>
+          <div className="bg-slate-700/50 rounded-lg p-3 text-center">
+            <p className="text-slate-400 text-xs">Procedure Admits</p>
+            <p className="text-2xl font-bold text-violet-400">{summaryStats.totalProcedureAdmits}</p>
           </div>
           <div className="bg-slate-700/50 rounded-lg p-3 text-center">
             <p className="text-slate-400 text-xs">Net Change</p>
@@ -244,7 +251,7 @@ export default function CensusForecastChart({
               fill={COLORS.downgrades}
               radius={[4, 4, 0, 0]}
             />
-            <Bar dataKey="admits" name="Admits" fill={COLORS.admits} radius={[4, 4, 0, 0]} />
+            <Bar dataKey="procedureAdmits" name="Procedure Admits" fill={COLORS.admits} radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -265,7 +272,7 @@ export default function CensusForecastChart({
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded" style={{ backgroundColor: COLORS.admits }} />
-          <span className="text-slate-400 italic">Admits (Coming Soon)</span>
+          <span className="text-slate-400">Procedure Admits</span>
         </div>
       </div>
     </div>

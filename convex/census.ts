@@ -1041,3 +1041,266 @@ export const getCensusForecast = query({
     };
   },
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// COMBINED CENSUS + PROCEDURE FORECAST
+// ═══════════════════════════════════════════════════════════════════
+
+import { normalizeUnitName, getUnitType } from "./lib/unitMapping";
+
+/**
+ * Parse a date string in various formats and return ISO format (YYYY-MM-DD)
+ * Handles: "1/13/2026", "01/13/2026", "2026-01-13"
+ */
+function parseToISODate(dateStr: string): string {
+  if (!dateStr) return "";
+
+  // Already ISO format
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+    return dateStr.split("T")[0];
+  }
+
+  // M/D/YYYY or MM/DD/YYYY format
+  const parts = dateStr.split("/");
+  if (parts.length === 3) {
+    const [month, day, year] = parts;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  return dateStr;
+}
+
+/**
+ * Get combined 7-day census forecast including procedure admissions.
+ * Merges current census patients with scheduled procedure admissions.
+ */
+export const getCombinedForecast = query({
+  args: {
+    hospitalId: v.id("hospitals"),
+    forecastDays: v.optional(v.number()), // Default 7
+  },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx);
+    await requireHospitalAccess(ctx, args.hospitalId);
+
+    const numDays = args.forecastDays ?? 7;
+
+    // Get the latest census import
+    const latestImport = await ctx.db
+      .query("census_imports")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .order("desc")
+      .first();
+
+    // Generate date range for forecast
+    const today = new Date();
+    const dates: string[] = [];
+    for (let i = 0; i < numDays; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() + i);
+      dates.push(d.toISOString().split("T")[0]);
+    }
+
+    // Get census patients from latest import
+    const censusPatients = latestImport
+      ? await ctx.db
+          .query("census_patients")
+          .withIndex("by_import", (q) => q.eq("importId", latestImport._id))
+          .filter((q) => q.eq(q.field("isActive"), true))
+          .collect()
+      : [];
+
+    // Get procedure patients for date range
+    const procedurePatients = await ctx.db
+      .query("procedure_patients")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    // Filter procedures to date range and those who will admit
+    // Note: visitDate in CSV can be "1/13/2026" format, convert to ISO
+    const relevantProcedures = procedurePatients.filter(
+      (p) => p.willAdmit && dates.includes(parseToISODate(p.visitDate))
+    );
+
+    // Build unit map from census patients
+    const unitMap = new Map<
+      string,
+      {
+        unitName: string;
+        unitType: "icu" | "floor";
+        censusPatients: typeof censusPatients;
+        days: Array<{
+          projectedCensus: number;
+          discharges: number;
+          downgrades: number;
+          procedureAdmits: number;
+        }>;
+      }
+    >();
+
+    // Initialize units from census patients
+    for (const patient of censusPatients) {
+      const normalized = normalizeUnitName(patient.currentUnitName);
+      if (!unitMap.has(normalized)) {
+        unitMap.set(normalized, {
+          unitName: normalized,
+          unitType: getUnitType(patient.currentUnitName),
+          censusPatients: [],
+          days: Array.from({ length: numDays }, () => ({
+            projectedCensus: 0,
+            discharges: 0,
+            downgrades: 0,
+            procedureAdmits: 0,
+          })),
+        });
+      }
+      unitMap.get(normalized)!.censusPatients.push(patient);
+    }
+
+    // Ensure CCU and N07E exist even if no census patients
+    if (!unitMap.has("CCU")) {
+      unitMap.set("CCU", {
+        unitName: "CCU",
+        unitType: "icu",
+        censusPatients: [],
+        days: Array.from({ length: numDays }, () => ({
+          projectedCensus: 0,
+          discharges: 0,
+          downgrades: 0,
+          procedureAdmits: 0,
+        })),
+      });
+    }
+    if (!unitMap.has("N07E")) {
+      unitMap.set("N07E", {
+        unitName: "N07E",
+        unitType: "floor",
+        censusPatients: [],
+        days: Array.from({ length: numDays }, () => ({
+          projectedCensus: 0,
+          discharges: 0,
+          downgrades: 0,
+          procedureAdmits: 0,
+        })),
+      });
+    }
+
+    // Calculate census discharges and downgrades by day
+    for (const [unitName, unit] of unitMap) {
+      for (let day = 0; day < numDays; day++) {
+        // Count discharges on this day
+        unit.days[day].discharges = unit.censusPatients.filter(
+          (p) => p.projectedDischargeDays === day
+        ).length;
+
+        // Count ICU downgrades (only for ICU units)
+        if (unit.unitType === "icu") {
+          unit.days[day].downgrades = unit.censusPatients.filter((p) => {
+            if (!p.predictedDowngradeDate) return false;
+            return p.predictedDowngradeDate === dates[day];
+          }).length;
+        }
+      }
+    }
+
+    // Add procedure admissions by day and unit
+    for (const proc of relevantProcedures) {
+      const procDateISO = parseToISODate(proc.visitDate);
+      const admitDayIndex = dates.indexOf(procDateISO);
+      if (admitDayIndex === -1) continue;
+
+      // ICU stay (if any)
+      if (proc.icuDays > 0) {
+        const icuUnit = normalizeUnitName(proc.icuUnit || "CCU");
+        const unit = unitMap.get(icuUnit);
+        if (unit) {
+          // Patient is in ICU from admit day for icuDays
+          for (let d = admitDayIndex; d < Math.min(admitDayIndex + proc.icuDays, numDays); d++) {
+            unit.days[d].procedureAdmits++;
+          }
+        }
+      }
+
+      // Floor stay (after ICU or direct)
+      if (proc.floorDays > 0) {
+        const floorUnit = normalizeUnitName(proc.floorUnit || "N07E");
+        const unit = unitMap.get(floorUnit);
+        if (unit) {
+          const floorStartDay = admitDayIndex + (proc.icuDays || 0);
+          for (let d = floorStartDay; d < Math.min(floorStartDay + proc.floorDays, numDays); d++) {
+            if (d >= 0 && d < numDays) {
+              unit.days[d].procedureAdmits++;
+            }
+          }
+        }
+      }
+    }
+
+    // Calculate projected census for each unit/day
+    const forecast = Array.from(unitMap.values()).map((unit) => {
+      let runningCensus = unit.censusPatients.length;
+
+      const days = unit.days.map((dayData, dayIndex) => {
+        if (dayIndex === 0) {
+          // Day 0: current census + procedure admits
+          return {
+            day: dayIndex,
+            date: dates[dayIndex],
+            projectedCensus: runningCensus + dayData.procedureAdmits,
+            predictedDischarges: dayData.discharges,
+            predictedDowngrades: dayData.downgrades,
+            procedureAdmits: dayData.procedureAdmits,
+            netChange: 0,
+          };
+        }
+
+        // Subsequent days: previous - discharges - downgrades + procedure admits
+        const prevDay = unit.days[dayIndex - 1];
+        runningCensus = Math.max(
+          0,
+          runningCensus - dayData.discharges - dayData.downgrades
+        );
+
+        const projectedCensus = runningCensus + dayData.procedureAdmits;
+        const netChange =
+          dayData.procedureAdmits - dayData.discharges - dayData.downgrades;
+
+        return {
+          day: dayIndex,
+          date: dates[dayIndex],
+          projectedCensus,
+          predictedDischarges: dayData.discharges,
+          predictedDowngrades: dayData.downgrades,
+          procedureAdmits: dayData.procedureAdmits,
+          netChange,
+        };
+      });
+
+      return {
+        unitName: unit.unitName,
+        unitType: unit.unitType,
+        currentCensus: unit.censusPatients.length,
+        procedureAdmitsTotal: relevantProcedures.filter((p) => {
+          const icuUnit = normalizeUnitName(p.icuUnit || "CCU");
+          const floorUnit = normalizeUnitName(p.floorUnit || "N07E");
+          return unit.unitName === icuUnit || unit.unitName === floorUnit;
+        }).length,
+        days,
+      };
+    });
+
+    // Sort: ICUs first, then by current census
+    forecast.sort((a, b) => {
+      if (a.unitType !== b.unitType) return a.unitType === "icu" ? -1 : 1;
+      return b.currentCensus - a.currentCensus;
+    });
+
+    return {
+      forecast,
+      censusDate: latestImport?.uploadDate || null,
+      importedAt: latestImport?.importedAt || null,
+      procedurePatientsTotal: relevantProcedures.length,
+    };
+  },
+});

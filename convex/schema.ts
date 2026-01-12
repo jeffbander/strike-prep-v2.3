@@ -919,4 +919,92 @@ export default defineSchema({
     .index("by_health_system", ["healthSystemId"])
     .index("by_site_code", ["siteCode"])
     .index("by_active", ["isActive"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PROCEDURE IMPORTS
+  // Metadata for each procedure schedule CSV upload (cath lab, EP lab)
+  // ═══════════════════════════════════════════════════════════════════
+
+  procedure_imports: defineTable({
+    hospitalId: v.id("hospitals"),
+    healthSystemId: v.id("health_systems"),
+
+    fileName: v.string(),
+    procedureDate: v.string(), // ISO date of scheduled procedures
+
+    // Statistics
+    patientsProcessed: v.number(),
+    willAdmit: v.number(),
+    sameDayDischarge: v.number(),
+    riskModifiedAdmits: v.number(),
+    ccuBedDays: v.number(),
+    floorBedDays: v.number(),
+
+    // Processing status
+    status: v.string(), // "pending" | "processing" | "completed" | "failed"
+    errors: v.optional(v.array(v.string())),
+
+    importedAt: v.number(),
+    importedBy: v.id("users"),
+
+    isActive: v.boolean(),
+  })
+    .index("by_hospital", ["hospitalId"])
+    .index("by_health_system", ["healthSystemId"])
+    .index("by_procedure_date", ["procedureDate"])
+    .index("by_status", ["status"])
+    .index("by_imported_at", ["importedAt"]),
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PROCEDURE PATIENTS
+  // Individual procedure records with disposition predictions
+  // ═══════════════════════════════════════════════════════════════════
+
+  procedure_patients: defineTable({
+    hospitalId: v.id("hospitals"),
+    importId: v.id("procedure_imports"),
+
+    // Patient identification
+    mrn: v.string(),
+    patientName: v.string(), // Original format: "LastName, F (60 y.o. M)"
+    initials: v.string(), // "LF" derived from name
+
+    // Demographics (parsed from CSV)
+    age: v.optional(v.number()),
+    sex: v.optional(v.string()),
+
+    // Procedure info
+    procedureText: v.string(), // Raw procedure name with CPT code
+    procedureCategory: v.string(), // Classified category
+    visitDate: v.string(), // Scheduled date
+    provider: v.optional(v.string()),
+    reasonForExam: v.optional(v.string()),
+
+    // Clinical values for risk stratification
+    ef: v.optional(v.number()), // Ejection fraction
+    creatinine: v.optional(v.number()), // mg/dL
+    hemoglobin: v.optional(v.number()), // g/dL
+    csn: v.optional(v.string()), // Contact Serial Number
+
+    // Disposition prediction
+    willAdmit: v.boolean(),
+    totalLOS: v.number(),
+    icuDays: v.number(),
+    icuUnit: v.optional(v.string()), // "CCU" or null
+    floorDays: v.number(),
+    floorUnit: v.optional(v.string()), // "N07E" or null
+    riskFactors: v.array(v.string()), // ["age_gt_85", "ef_lt_30", etc.]
+    riskModified: v.boolean(),
+    reasoning: v.string(),
+
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_hospital", ["hospitalId"])
+    .index("by_import", ["importId"])
+    .index("by_mrn", ["hospitalId", "mrn"])
+    .index("by_visit_date", ["hospitalId", "visitDate"])
+    .index("by_procedure_category", ["hospitalId", "procedureCategory"])
+    .index("by_will_admit", ["hospitalId", "willAdmit"]),
 });
