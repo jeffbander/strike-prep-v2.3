@@ -260,12 +260,12 @@ export default function CensusImport({
                 Drag and drop your Excel file here, or click to browse
               </p>
               <p className="text-slate-500 text-sm">
-                Supports .xlsx and .xls files with multiple unit sheets
+                Supports .xlsx, .xls, and .csv files
               </p>
               <input
                 id="census-file-input"
                 type="file"
-                accept=".xlsx,.xls"
+                accept=".xlsx,.xls,.csv"
                 className="hidden"
                 onChange={handleFileInput}
               />

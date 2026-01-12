@@ -402,6 +402,19 @@ export const upsertPatients = mutation({
           .first();
 
         if (existingPatient) {
+          // If patient was previously discharged, clean up false discharge history entries
+          if (existingPatient.patientStatus === "discharged") {
+            const dischargeHistoryEntries = await ctx.db
+              .query("census_patient_history")
+              .withIndex("by_patient", (q) => q.eq("patientId", existingPatient._id))
+              .filter((q) => q.eq(q.field("toUnitName"), "DISCHARGED"))
+              .collect();
+
+            for (const entry of dischargeHistoryEntries) {
+              await ctx.db.delete(entry._id);
+            }
+          }
+
           // Check for unit transfer
           if (existingPatient.currentUnitName !== patient.unitName) {
             // Record transfer in history
@@ -453,6 +466,7 @@ export const upsertPatients = mutation({
             projectedDischargeDays: patient.projectedDischargeDays,
             // Status
             patientStatus: "active",
+            isActive: true, // Ensure patient is marked active (may have been discharged previously)
             lastSeenImportId: args.importId,
             expiresAt,
             updatedAt: now,
@@ -777,12 +791,11 @@ export const getStaffingPredictions = query({
       return { predictions: [], censusDate: null };
     }
 
-    // Get active patients
+    // Get active patients from the latest import only
     const patients = await ctx.db
       .query("census_patients")
-      .withIndex("by_patient_status", (q) =>
-        q.eq("hospitalId", args.hospitalId).eq("patientStatus", "active")
-      )
+      .withIndex("by_import", (q) => q.eq("importId", latestImport._id))
+      .filter((q) => q.eq(q.field("isActive"), true))
       .collect();
 
     // Group by unit
@@ -928,12 +941,11 @@ export const getCensusForecast = query({
       return { forecast: [], censusDate: null, importedAt: null };
     }
 
-    // Get active patients
+    // Get active patients from the latest import only
     const patients = await ctx.db
       .query("census_patients")
-      .withIndex("by_patient_status", (q) =>
-        q.eq("hospitalId", args.hospitalId).eq("patientStatus", "active")
-      )
+      .withIndex("by_import", (q) => q.eq("importId", latestImport._id))
+      .filter((q) => q.eq(q.field("isActive"), true))
       .collect();
 
     if (patients.length === 0) {

@@ -97,10 +97,19 @@ const AMION_EPOCH = new Date(2000, 0, 1);
 const SPECIAL_BYTES = {
   EMPTY: 0,
   EMPTY_SLOT: 250,    // 0xFA - empty slot marker
+  EMPTY_SLOT_2: 253,  // 0xFD - another empty marker
   DISABLED: 255,      // 0xFF - disabled/not applicable
   WEEK_MARKER_1: 252, // 0xFC - weekly override section marker
   WEEK_MARKER_2: 7,   // 0x07 - paired with WEEK_MARKER_1
 };
+
+// 2-byte special values that appear as staff IDs
+const SPECIAL_STAFF_IDS = new Set([
+  65533,  // 0xFFFD - empty/TBD marker
+  65534,  // 0xFFFE - disabled
+  65535,  // 0xFFFF - not applicable
+  0,      // empty
+]);
 
 // Generic title patterns that should be flagged
 const GENERIC_TITLE_PATTERNS = [
@@ -212,43 +221,42 @@ function decodeRLE(bytes: number[]): number[] {
 /**
  * Calculate dates for decoded schedule entries
  *
- * The startOffset in ROW data is a reference point, but not a direct Julian day
- * for the schedule dates. We need to calibrate using known metadata.
+ * AMion ROW data format: ROW =startOffset count direction increment bytesPerEntry <data>
+ * - startOffset: Week number from AMion epoch (Jan 1, 2000)
+ * - direction: -1 = reverse chronological, 1 = forward
+ * - increment: -7 = weekly blocks, -1 = daily
  *
- * Strategy: Use the YEAR field's end year to estimate the schedule's end date,
- * then work backwards based on the number of decoded entries.
+ * The startOffset is actually a week offset from AMion epoch (Jan 1, 2000).
+ * startOffset=1167 means week 1167 from Jan 1, 2000 = ~May 2022
  */
 function calculateDates(
   startOffset: number,
   decodedIds: number[],
   direction: number,
+  increment: number,
+  scheduleYear: number,
   scheduleEndYear?: number
 ): Date[] {
   const dates: Date[] = [];
-  const totalDays = decodedIds.length;
+  const totalEntries = decodedIds.length;
 
-  // Default to current year if no schedule year provided
-  const endYear = scheduleEndYear || new Date().getFullYear();
+  if (totalEntries === 0) return dates;
 
-  // Assume the schedule ends at December 31 of the end year
-  // (or use a reference date near "now" if schedule year matches current year)
-  let referenceDate: Date;
-  const currentYear = new Date().getFullYear();
+  // startOffset is the week number from AMion epoch (Jan 1, 2000)
+  // Convert to actual date: epoch + (startOffset * 7) days
+  const epochDate = new Date(2000, 0, 1);
+  const referenceDate = new Date(epochDate);
+  referenceDate.setDate(referenceDate.getDate() + (startOffset * 7));
 
-  if (endYear >= currentYear) {
-    // Schedule includes current/future year - use today as a rough endpoint
-    referenceDate = new Date();
-  } else {
-    // Schedule is historical - use end of that year
-    referenceDate = new Date(endYear, 11, 31);
-  }
+  // Determine the step size (weekly = 7 days)
+  const daysPerEntry = Math.abs(increment) || 1;
 
-  // Calculate dates working backwards from reference
-  for (let i = 0; i < totalDays; i++) {
+  // Generate dates for each entry
+  // If direction is -1, the data is stored newest-first, so we've already reversed it
+  // Now entry 0 is the oldest, and we count forward from the reference date
+  for (let i = 0; i < totalEntries; i++) {
     const date = new Date(referenceDate);
-    // Index 0 = oldest date (after reversing), so:
-    // date = referenceDate - (totalDays - 1 - i)
-    date.setDate(date.getDate() - (totalDays - 1 - i));
+    date.setDate(date.getDate() + (i * daysPerEntry));
     dates.push(date);
   }
 
@@ -283,7 +291,7 @@ function parseShiftTime(shtm: string): string | undefined {
 }
 
 /**
- * Decode ROW binary data to extract daily assignments using proper RLE decoding
+ * Decode ROW binary data to extract schedule assignments using proper RLE decoding
  *
  * ROW format: ROW =startOffset count direction increment bytesPerEntry <binary_data>
  * Binary data uses RLE: [header1] [header2] [count1] [staffId1] [count2] [staffId2] ...
@@ -294,6 +302,7 @@ function decodeROWData(
   serviceId: number,
   serviceName: string,
   staffIdMap: Map<number, AmionProvider>,
+  scheduleYear: number,
   scheduleEndYear?: number
 ): AmionAssignment[] {
   const assignments: AmionAssignment[] = [];
@@ -324,36 +333,52 @@ function decodeROWData(
     }
   }
 
-  // Calculate dates based on schedule end year
-  const dates = calculateDates(rowParams.startOffset, primaryIds, rowParams.direction, scheduleEndYear);
+  // Calculate dates based on schedule year range and increment
+  const dates = calculateDates(
+    rowParams.startOffset,
+    primaryIds,
+    rowParams.direction,
+    rowParams.increment,
+    scheduleYear,
+    scheduleEndYear
+  );
 
-  // Create assignments for each day
+  // Create assignments for each entry
   for (let i = 0; i < primaryIds.length; i++) {
     const primaryId = primaryIds[i];
     const secondaryId = secondaryIds[i];
     const date = dates[i];
 
-    // Skip empty assignments
-    if (primaryId === SPECIAL_BYTES.EMPTY || primaryId === SPECIAL_BYTES.EMPTY_SLOT) {
+    // Skip empty/invalid assignments
+    if (
+      primaryId === SPECIAL_BYTES.EMPTY ||
+      primaryId === SPECIAL_BYTES.EMPTY_SLOT ||
+      primaryId === SPECIAL_BYTES.EMPTY_SLOT_2 ||
+      SPECIAL_STAFF_IDS.has(primaryId)
+    ) {
       continue;
     }
 
     const primaryStaff = staffIdMap.get(primaryId);
-    const secondaryStaff = secondaryId ? staffIdMap.get(secondaryId) : undefined;
 
-    // Get provider name - could be from staff map or might be a generic title
-    const providerName = primaryStaff?.name || `Staff ID ${primaryId}`;
-    const secondaryName = secondaryStaff?.name;
+    // Skip if we can't resolve the staff ID (unknown provider)
+    if (!primaryStaff) {
+      continue;
+    }
+
+    const secondaryStaff = secondaryId && !SPECIAL_STAFF_IDS.has(secondaryId)
+      ? staffIdMap.get(secondaryId)
+      : undefined;
 
     assignments.push({
       serviceId,
       serviceName,
       providerId: primaryId,
-      providerName,
+      providerName: primaryStaff.name,
       date: date.toISOString().split('T')[0],
-      secondaryProviderId: secondaryId && secondaryId !== SPECIAL_BYTES.EMPTY ? secondaryId : undefined,
-      secondaryProviderName: secondaryName,
-      isGenericTitle: isGenericTitle(providerName) || isGenericTitle(serviceName),
+      secondaryProviderId: secondaryStaff ? secondaryId : undefined,
+      secondaryProviderName: secondaryStaff?.name,
+      isGenericTitle: isGenericTitle(primaryStaff.name) || isGenericTitle(serviceName),
     });
   }
 
@@ -626,6 +651,12 @@ export function parseAmionFile(content: string): AmionParseResult {
   // Decode ROW data for all services to get assignments
   // Note: We decode regardless of scheduleStartDate since dates come from ROW header
   if (result.staffIdMap.size > 0) {
+    // Define the relevant date range based on schedule years
+    const startYear = result.scheduleYear;
+    const endYear = result.scheduleEndYear || result.scheduleYear;
+    const rangeStartDate = `${startYear}-01-01`;
+    const rangeEndDate = `${endYear}-12-31`;
+
     for (const service of result.amionServices) {
       if (service.rawRowData) {
         const serviceAssignments = decodeROWData(
@@ -634,9 +665,15 @@ export function parseAmionFile(content: string): AmionParseResult {
           service.id,
           service.name,
           result.staffIdMap,
-          result.scheduleEndYear || result.scheduleYear
+          result.scheduleYear,
+          result.scheduleEndYear
         );
-        result.assignments.push(...serviceAssignments);
+
+        // Filter to only include assignments within the schedule year range
+        const filteredAssignments = serviceAssignments.filter(a =>
+          a.date >= rangeStartDate && a.date <= rangeEndDate
+        );
+        result.assignments.push(...filteredAssignments);
       }
     }
   }
