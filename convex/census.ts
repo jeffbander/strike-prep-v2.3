@@ -357,7 +357,7 @@ export const upsertPatients = mutation({
         room: v.optional(v.string()),
         bed: v.optional(v.string()),
         // 1:1 Nursing detection
-        requiresOneToOne: v.boolean(),
+        requiresOneToOne: v.optional(v.boolean()),
         oneToOneDevices: v.optional(v.array(v.string())),
         // AI input from CSV
         dischargeToday: v.optional(v.string()),
@@ -452,9 +452,9 @@ export const upsertPatients = mutation({
             room: patient.room,
             bed: patient.bed,
             // 1:1 Nursing
-            requiresOneToOne: patient.requiresOneToOne,
+            requiresOneToOne: patient.requiresOneToOne ?? false,
             oneToOneDevices: patient.oneToOneDevices,
-            oneToOneSource: patient.requiresOneToOne ? "keyword" : undefined,
+            oneToOneSource: (patient.requiresOneToOne ?? false) ? "keyword" : undefined,
             // AI input
             dischargeToday: patient.dischargeToday,
             rawGeneralComments: patient.rawGeneralComments,
@@ -496,9 +496,9 @@ export const upsertPatients = mutation({
             room: patient.room,
             bed: patient.bed,
             // 1:1 Nursing
-            requiresOneToOne: patient.requiresOneToOne,
+            requiresOneToOne: patient.requiresOneToOne ?? false,
             oneToOneDevices: patient.oneToOneDevices,
-            oneToOneSource: patient.requiresOneToOne ? "keyword" : undefined,
+            oneToOneSource: (patient.requiresOneToOne ?? false) ? "keyword" : undefined,
             // AI input
             dischargeToday: patient.dischargeToday,
             rawGeneralComments: patient.rawGeneralComments,
