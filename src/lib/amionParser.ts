@@ -182,17 +182,25 @@ function extractBytes(rawData: string): number[] {
 
 /**
  * Decode Run-Length Encoded schedule data
- * Format: [header1] [header2] [count1] [staffId1] [count2] [staffId2] ...
+ * Format: [header1] [header2] [staffId1] [count1] [staffId2] [count2] ...
  *
- * Each (count, staffId) pair means "staffId is assigned for 'count' consecutive days"
+ * Each (staffId, count) pair means "staffId is assigned for 'count' consecutive days"
+ * Note: The order is staffId THEN count, not count then staffId!
  */
 function decodeRLE(bytes: number[]): number[] {
   const result: number[] = [];
   let i = 2; // Skip 2-byte header
 
   while (i < bytes.length - 1) {
-    const count = bytes[i];
-    const staffId = bytes[i + 1];
+    const staffId = bytes[i];
+    const count = bytes[i + 1];
+
+    // Check for weekly override marker (0xFC 0x07)
+    if (staffId === SPECIAL_BYTES.WEEK_MARKER_1 && count === SPECIAL_BYTES.WEEK_MARKER_2) {
+      // Skip override section: marker + ref + sep + 7 days
+      i += 11;
+      continue;
+    }
 
     // Validate count - skip if 0 or unreasonably large
     if (count === 0 || count > 50) {
@@ -200,10 +208,9 @@ function decodeRLE(bytes: number[]): number[] {
       continue;
     }
 
-    // Check for weekly override marker (0xFC 0x07)
-    if (count === SPECIAL_BYTES.WEEK_MARKER_1 && staffId === SPECIAL_BYTES.WEEK_MARKER_2) {
-      // Skip override section: marker + ref + sep + 7 days
-      i += 11;
+    // Skip special/empty staff IDs
+    if (staffId === 0 || staffId >= 250) {
+      i += 2;
       continue;
     }
 
