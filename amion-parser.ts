@@ -201,12 +201,13 @@ export class AmionParser {
   
   private extractDepartment(): string {
     // Look in SECT=data section
-    const dataSection = this.content.match(/SECT=data\n(.*?)$/s)?.[1] || '';
+    // Use [\s\S] instead of . with /s flag for ES5 compatibility
+    const dataSection = this.content.match(/SECT=data\n([\s\S]*?)$/)?.[1] || '';
     const deptMatch = dataSection.match(/NAME=([^\n]+)/);
     if (deptMatch) return deptMatch[1].trim();
-    
+
     // Fallback to first page name
-    const pageMatch = this.content.match(/SECT=page\n.*?NAME=([^\n]+)/s);
+    const pageMatch = this.content.match(/SECT=page\n[\s\S]*?NAME=([^\n]+)/);
     return pageMatch ? pageMatch[1].trim() : 'Unknown';
   }
   
@@ -233,7 +234,7 @@ export class AmionParser {
   // --------------------------------------------------------------------------
   
   private parseStaffSection(): AmionStaff[] {
-    const staffSection = this.content.match(/SECT=staff\n(.*?)(?=SECT=skill|SECT=pattern|$)/s)?.[1] || '';
+    const staffSection = this.content.match(/SECT=staff\n([\s\S]*?)(?=SECT=skill|SECT=pattern|$)/)?.[1] || '';
     const records = staffSection.split(/\nNAME=/);
     
     const staff: AmionStaff[] = [];
@@ -268,7 +269,7 @@ export class AmionParser {
   // --------------------------------------------------------------------------
   
   private parseServiceSection(): AmionService[] {
-    const serviceSection = this.content.match(/SECT=service\n(.*?)(?=SECT=staff)/s)?.[1] || '';
+    const serviceSection = this.content.match(/SECT=service\n([\s\S]*?)(?=SECT=staff)/)?.[1] || '';
     const records = serviceSection.split(/\nNAME=/);
     
     const services: AmionService[] = [];
@@ -337,7 +338,7 @@ export class AmionParser {
   // --------------------------------------------------------------------------
   
   private parseXlnSchedule(): ScheduleEntry[] {
-    const xlnSection = this.content.match(/SECT=xln\n(.*?)(?=SECT=pattern|$)/s)?.[1] || '';
+    const xlnSection = this.content.match(/SECT=xln\n([\s\S]*?)(?=SECT=pattern|$)/)?.[1] || '';
     const entries: ScheduleEntry[] = [];
     
     // Find all TYPE=15 composite services with ROW data
