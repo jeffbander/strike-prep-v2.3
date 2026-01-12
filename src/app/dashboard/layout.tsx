@@ -87,6 +87,12 @@ const CensusIcon = () => (
   </svg>
 );
 
+const ProcedureIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+  </svg>
+);
+
 const navItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: <HomeIcon /> },
   { href: "/dashboard/scenarios", label: "Strike Scenarios", icon: <ScenarioIcon />, highlight: true },
@@ -94,6 +100,7 @@ const navItems: NavItem[] = [
   { href: "/dashboard/availability", label: "Provider Availability", icon: <CalendarIcon /> },
   { href: "/dashboard/coverage", label: "Coverage Dashboard", icon: <ChartIcon /> },
   { href: "/dashboard/census", label: "Patient Census", icon: <CensusIcon />, roles: ["super_admin", "health_system_admin", "hospital_admin"] },
+  { href: "/dashboard/procedures", label: "Procedures", icon: <ProcedureIcon />, roles: ["super_admin", "health_system_admin", "hospital_admin"] },
   { href: "/dashboard/health-systems", label: "Health Systems", icon: <BuildingIcon />, roles: ["super_admin"] },
   { href: "/dashboard/hospitals", label: "Hospitals", icon: <BuildingIcon />, roles: ["super_admin", "health_system_admin"] },
   { href: "/dashboard/departments", label: "Departments", icon: <ClipboardIcon />, roles: ["super_admin", "health_system_admin", "hospital_admin"] },

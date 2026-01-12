@@ -166,6 +166,37 @@ function parseCSVLine(line: string): string[] {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// SERVICE TYPE CLASSIFICATION
+// ═══════════════════════════════════════════════════════════════════
+
+type ServiceType = "EP" | "Cath" | "Structural";
+
+const EP_PROCEDURES = [
+  "VT_ABLATION",
+  "AFIB_ABLATION",
+  "FLUTTER_ABLATION",
+  "SVT_ABLATION",
+  "PVC_ABLATION",
+  "PPM_IMPLANT",
+  "ICD_IMPLANT",
+  "GENERATOR_CHANGE",
+  "LOOP_RECORDER",
+  "CARDIOVERSION",
+  "TILT_TABLE",
+];
+
+const STRUCTURAL_PROCEDURES = ["TAVR"];
+
+/**
+ * Categorize procedure into EP, Cath, or Structural service
+ */
+function getServiceType(category: string): ServiceType {
+  if (EP_PROCEDURES.includes(category)) return "EP";
+  if (STRUCTURAL_PROCEDURES.includes(category)) return "Structural";
+  return "Cath";
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // QUERIES
 // ═══════════════════════════════════════════════════════════════════
 
@@ -359,6 +390,119 @@ export const getProcedureSummary = query({
     }
 
     return summary;
+  },
+});
+
+/**
+ * Get procedure dashboard data grouped by service type
+ */
+export const getProcedureDashboard = query({
+  args: {
+    hospitalId: v.id("hospitals"),
+    startDate: v.string(),
+    endDate: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx);
+    await requireHospitalAccess(ctx, args.hospitalId);
+
+    const endDate = args.endDate || args.startDate;
+
+    // Get all active procedure patients for hospital
+    const allPatients = await ctx.db
+      .query("procedure_patients")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    // Filter to date range
+    const patients = allPatients.filter(
+      (p) => p.visitDate >= args.startDate && p.visitDate <= endDate
+    );
+
+    // Initialize service stats
+    const byService: Record<ServiceType, {
+      count: number;
+      willAdmit: number;
+      sameDayDischarge: number;
+      ccuDays: number;
+      floorDays: number;
+      riskModified: number;
+    }> = {
+      EP: { count: 0, willAdmit: 0, sameDayDischarge: 0, ccuDays: 0, floorDays: 0, riskModified: 0 },
+      Cath: { count: 0, willAdmit: 0, sameDayDischarge: 0, ccuDays: 0, floorDays: 0, riskModified: 0 },
+      Structural: { count: 0, willAdmit: 0, sameDayDischarge: 0, ccuDays: 0, floorDays: 0, riskModified: 0 },
+    };
+
+    // Summary totals
+    const summary = {
+      totalProcedures: patients.length,
+      willAdmit: 0,
+      sameDayDischarge: 0,
+      riskModified: 0,
+      ccuBedDays: 0,
+      floorBedDays: 0,
+    };
+
+    // Process each patient
+    const processedPatients = patients.map((p) => {
+      const serviceType = getServiceType(p.procedureCategory);
+
+      // Update service stats
+      byService[serviceType].count++;
+      if (p.willAdmit) {
+        byService[serviceType].willAdmit++;
+        summary.willAdmit++;
+      } else {
+        byService[serviceType].sameDayDischarge++;
+        summary.sameDayDischarge++;
+      }
+      if (p.riskModified) {
+        byService[serviceType].riskModified++;
+        summary.riskModified++;
+      }
+      byService[serviceType].ccuDays += p.icuDays || 0;
+      byService[serviceType].floorDays += p.floorDays || 0;
+      summary.ccuBedDays += p.icuDays || 0;
+      summary.floorBedDays += p.floorDays || 0;
+
+      return {
+        _id: p._id,
+        mrn: p.mrn,
+        initials: p.initials,
+        visitDate: p.visitDate,
+        procedureText: p.procedureText,
+        procedureCategory: p.procedureCategory,
+        serviceType,
+        willAdmit: p.willAdmit,
+        icuDays: p.icuDays || 0,
+        floorDays: p.floorDays || 0,
+        totalLOS: p.totalLOS || 0,
+        riskFactors: p.riskFactors || [],
+        riskModified: p.riskModified || false,
+        reasoning: p.reasoning || "",
+        provider: p.provider,
+        age: p.age,
+        ef: p.ef,
+        creatinine: p.creatinine,
+        hemoglobin: p.hemoglobin,
+      };
+    });
+
+    // Sort patients by date, then by service type
+    processedPatients.sort((a, b) => {
+      if (a.visitDate !== b.visitDate) {
+        return a.visitDate.localeCompare(b.visitDate);
+      }
+      return a.serviceType.localeCompare(b.serviceType);
+    });
+
+    return {
+      dateRange: { start: args.startDate, end: endDate },
+      summary,
+      byService,
+      patients: processedPatients,
+    };
   },
 });
 
