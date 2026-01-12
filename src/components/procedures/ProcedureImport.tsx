@@ -213,23 +213,41 @@ export default function ProcedureImport({
         procedureDate,
       });
 
-      // Process patients in batches
-      const batchSize = 50;
+      // Process patients in smaller batches with delays to avoid concurrency issues
+      const batchSize = 15; // Smaller batches for stability
       let totalProcessed = 0;
-      let totalWillAdmit = 0;
-      let totalSameDay = 0;
       const allErrors: string[] = [];
 
       for (let i = 0; i < parseResult.patients.length; i += batchSize) {
         const batch = parseResult.patients.slice(i, i + batchSize);
+        const batchNum = Math.floor(i / batchSize) + 1;
+        const totalBatches = Math.ceil(parseResult.patients.length / batchSize);
 
-        // Note: The backend counts willAdmit/sameDay, so we just send the batch
-        await processProcedures({
-          importId,
-          patients: batch,
-        });
+        // Retry logic for each batch
+        let retries = 3;
+        while (retries > 0) {
+          try {
+            await processProcedures({
+              importId,
+              patients: batch,
+            });
+            totalProcessed += batch.length;
+            break; // Success, exit retry loop
+          } catch (err) {
+            retries--;
+            if (retries === 0) {
+              allErrors.push(`Batch ${batchNum} failed: ${err instanceof Error ? err.message : "Unknown"}`);
+            } else {
+              // Wait before retry (exponential backoff)
+              await new Promise(r => setTimeout(r, 1000 * (4 - retries)));
+            }
+          }
+        }
 
-        totalProcessed += batch.length;
+        // Small delay between batches to reduce concurrency pressure
+        if (i + batchSize < parseResult.patients.length) {
+          await new Promise(r => setTimeout(r, 300));
+        }
       }
 
       // Get summary from the backend (would need to fetch import stats)
@@ -242,7 +260,11 @@ export default function ProcedureImport({
       });
 
       setStep("result");
-      toast.success(`Imported ${parseResult.patients.length} procedures`);
+      if (allErrors.length > 0) {
+        toast.warning(`Imported with ${allErrors.length} batch errors`);
+      } else {
+        toast.success(`Imported ${parseResult.patients.length} procedures`);
+      }
       onImportComplete?.();
     } catch (error) {
       toast.error(`Import failed: ${error instanceof Error ? error.message : "Unknown error"}`);
