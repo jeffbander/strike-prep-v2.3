@@ -587,6 +587,7 @@ export const processProcedures = mutation({
     const hospitalId = importRecord.hospitalId;
 
     let created = 0;
+    let updated = 0;
     let willAdmitCount = 0;
     let sameDayCount = 0;
     let riskModifiedCount = 0;
@@ -612,39 +613,76 @@ export const processProcedures = mutation({
         // Parse sex if not provided
         const sex = patient.sex || parseSexFromName(patient.patientName);
 
-        // Create patient record
-        await ctx.db.insert("procedure_patients", {
-          hospitalId,
-          importId: args.importId,
-          mrn: patient.mrn,
-          patientName: patient.patientName,
-          initials,
-          age: patient.age,
-          sex,
-          procedureText: patient.procedureText,
-          procedureCategory: prediction.procedureCategory,
-          visitDate: patient.visitDate,
-          provider: patient.provider,
-          reasonForExam: patient.reasonForExam,
-          ef: patient.ef,
-          creatinine: patient.creatinine,
-          hemoglobin: patient.hemoglobin,
-          csn: patient.csn,
-          willAdmit: prediction.willAdmit,
-          totalLOS: prediction.totalLOS,
-          icuDays: prediction.icuDays,
-          icuUnit: prediction.icuUnit || undefined,
-          floorDays: prediction.floorDays,
-          floorUnit: prediction.floorUnit || undefined,
-          riskFactors: prediction.riskFactors,
-          riskModified: prediction.riskModified,
-          reasoning: prediction.reasoning,
-          isActive: true,
-          createdAt: now,
-          updatedAt: now,
-        });
+        // Check for existing patient by MRN + visitDate (prevent duplicates)
+        const existingPatient = await ctx.db
+          .query("procedure_patients")
+          .withIndex("by_mrn", (q) => q.eq("hospitalId", hospitalId).eq("mrn", patient.mrn))
+          .filter((q) => q.eq(q.field("visitDate"), patient.visitDate))
+          .first();
 
-        created++;
+        if (existingPatient) {
+          // Update existing patient record
+          await ctx.db.patch(existingPatient._id, {
+            importId: args.importId,
+            patientName: patient.patientName,
+            initials,
+            age: patient.age,
+            sex,
+            procedureText: patient.procedureText,
+            procedureCategory: prediction.procedureCategory,
+            provider: patient.provider,
+            reasonForExam: patient.reasonForExam,
+            ef: patient.ef,
+            creatinine: patient.creatinine,
+            hemoglobin: patient.hemoglobin,
+            csn: patient.csn,
+            willAdmit: prediction.willAdmit,
+            totalLOS: prediction.totalLOS,
+            icuDays: prediction.icuDays,
+            icuUnit: prediction.icuUnit || undefined,
+            floorDays: prediction.floorDays,
+            floorUnit: prediction.floorUnit || undefined,
+            riskFactors: prediction.riskFactors,
+            riskModified: prediction.riskModified,
+            reasoning: prediction.reasoning,
+            isActive: true,
+            updatedAt: now,
+          });
+          updated++;
+        } else {
+          // Create new patient record
+          await ctx.db.insert("procedure_patients", {
+            hospitalId,
+            importId: args.importId,
+            mrn: patient.mrn,
+            patientName: patient.patientName,
+            initials,
+            age: patient.age,
+            sex,
+            procedureText: patient.procedureText,
+            procedureCategory: prediction.procedureCategory,
+            visitDate: patient.visitDate,
+            provider: patient.provider,
+            reasonForExam: patient.reasonForExam,
+            ef: patient.ef,
+            creatinine: patient.creatinine,
+            hemoglobin: patient.hemoglobin,
+            csn: patient.csn,
+            willAdmit: prediction.willAdmit,
+            totalLOS: prediction.totalLOS,
+            icuDays: prediction.icuDays,
+            icuUnit: prediction.icuUnit || undefined,
+            floorDays: prediction.floorDays,
+            floorUnit: prediction.floorUnit || undefined,
+            riskFactors: prediction.riskFactors,
+            riskModified: prediction.riskModified,
+            reasoning: prediction.reasoning,
+            isActive: true,
+            createdAt: now,
+            updatedAt: now,
+          });
+          created++;
+        }
 
         // Update counts
         if (prediction.willAdmit) {
@@ -670,7 +708,7 @@ export const processProcedures = mutation({
 
     // Update import statistics
     await ctx.db.patch(args.importId, {
-      patientsProcessed: created,
+      patientsProcessed: created + updated,
       willAdmit: willAdmitCount,
       sameDayDischarge: sameDayCount,
       riskModifiedAdmits: riskModifiedCount,
@@ -682,6 +720,7 @@ export const processProcedures = mutation({
 
     return {
       created,
+      updated,
       willAdmit: willAdmitCount,
       sameDayDischarge: sameDayCount,
       riskModifiedAdmits: riskModifiedCount,
@@ -725,6 +764,50 @@ export const deactivateImport = mutation({
     });
 
     return { deactivated: patients.length };
+  },
+});
+
+/**
+ * Clear all procedure data for a hospital (hard delete)
+ * Use this to start fresh before a new import
+ */
+export const clearAllProcedures = mutation({
+  args: {
+    hospitalId: v.id("hospitals"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    await requireHospitalAccess(ctx, args.hospitalId);
+
+    // Delete all procedure patients for this hospital
+    const patients = await ctx.db
+      .query("procedure_patients")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .collect();
+
+    for (const patient of patients) {
+      await ctx.db.delete(patient._id);
+    }
+
+    // Delete all procedure imports for this hospital
+    const imports = await ctx.db
+      .query("procedure_imports")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .collect();
+
+    for (const importRecord of imports) {
+      await ctx.db.delete(importRecord._id);
+    }
+
+    await auditLog(ctx, user, "CLEAR", "PROCEDURE_IMPORT", args.hospitalId, {
+      patientsDeleted: patients.length,
+      importsDeleted: imports.length,
+    });
+
+    return {
+      patientsDeleted: patients.length,
+      importsDeleted: imports.length,
+    };
   },
 });
 
