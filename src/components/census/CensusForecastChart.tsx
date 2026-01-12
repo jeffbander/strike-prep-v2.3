@@ -59,10 +59,11 @@ export default function CensusForecastChart({
         {
           day: number;
           label: string;
-          census: number;
+          totalCensus: number; // Total projected (current + procedures)
+          currentPatients: number; // From current census only
+          procedureAdmits: number; // New admits from procedures
           discharges: number;
           downgrades: number;
-          procedureAdmits: number;
         }
       >();
 
@@ -71,15 +72,18 @@ export default function CensusForecastChart({
           const existing = dayMap.get(dayData.day) || {
             day: dayData.day,
             label: dayData.day === 0 ? "Today" : `Day ${dayData.day}`,
-            census: 0,
+            totalCensus: 0,
+            currentPatients: 0,
+            procedureAdmits: 0,
             discharges: 0,
             downgrades: 0,
-            procedureAdmits: 0,
           };
-          existing.census += dayData.projectedCensus;
+          existing.totalCensus += dayData.projectedCensus;
+          // currentPatients = projectedCensus minus procedureAdmits (just the census patients)
+          existing.currentPatients += (dayData.projectedCensus - dayData.procedureAdmits);
+          existing.procedureAdmits += dayData.procedureAdmits;
           existing.discharges += dayData.predictedDischarges;
           existing.downgrades += dayData.predictedDowngrades;
-          existing.procedureAdmits += dayData.procedureAdmits;
           dayMap.set(dayData.day, existing);
         }
       }
@@ -94,10 +98,11 @@ export default function CensusForecastChart({
     return unit.days.map((d) => ({
       day: d.day,
       label: d.day === 0 ? "Today" : `Day ${d.day}`,
-      census: d.projectedCensus,
+      totalCensus: d.projectedCensus,
+      currentPatients: d.projectedCensus - d.procedureAdmits,
+      procedureAdmits: d.procedureAdmits,
       discharges: d.predictedDischarges,
       downgrades: d.predictedDowngrades,
-      procedureAdmits: d.procedureAdmits,
     }));
   }, [forecast, selectedUnit]);
 
@@ -109,11 +114,11 @@ export default function CensusForecastChart({
     const totalDischarges = chartData.reduce((sum, d) => sum + d.discharges, 0);
     const totalDowngrades = chartData.reduce((sum, d) => sum + d.downgrades, 0);
     const totalProcedureAdmits = chartData.reduce((sum, d) => sum + d.procedureAdmits, 0);
-    const netChange = lastDay.census - today.census;
+    const netChange = lastDay.totalCensus - today.totalCensus;
 
     return {
-      currentCensus: today.census,
-      projectedLastDay: lastDay.census,
+      currentCensus: today.currentPatients, // Just current patients (no procedures yet)
+      projectedLastDay: lastDay.totalCensus, // Total including procedures
       lastDayNum: chartData.length - 1,
       totalDischarges,
       totalDowngrades,
@@ -122,21 +127,28 @@ export default function CensusForecastChart({
     };
   }, [chartData]);
 
-  // Custom tooltip for dark theme
+  // Custom tooltip for dark theme - shows total census
   const CustomTooltip = ({
     active,
     payload,
     label,
   }: {
     active?: boolean;
-    payload?: Array<{ name: string; value: number; color: string }>;
+    payload?: Array<{ name: string; value: number; color: string; dataKey: string }>;
     label?: string;
   }) => {
-    if (!active || !payload) return null;
+    if (!active || !payload || payload.length === 0) return null;
+
+    // Calculate total census from stacked bars
+    const currentPatients = payload.find(p => p.dataKey === "currentPatients")?.value || 0;
+    const procedureAdmits = payload.find(p => p.dataKey === "procedureAdmits")?.value || 0;
+    const totalCensus = currentPatients + procedureAdmits;
 
     return (
       <div className="bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-lg">
         <p className="text-white font-medium mb-2">{label}</p>
+        <p className="text-lg font-bold text-white mb-1">Total Census: {totalCensus}</p>
+        <hr className="border-slate-600 my-2" />
         {payload.map((entry, idx) => (
           <p key={idx} className="text-sm" style={{ color: entry.color }}>
             {entry.name}: {entry.value}
@@ -229,7 +241,7 @@ export default function CensusForecastChart({
         </div>
       )}
 
-      {/* Chart */}
+      {/* Chart - Stacked bar showing current patients + procedure admits */}
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
@@ -238,20 +250,20 @@ export default function CensusForecastChart({
             <YAxis stroke={COLORS.text} tick={{ fill: COLORS.text }} />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ color: COLORS.text }} />
-            <Bar dataKey="census" name="Census" fill={COLORS.census} radius={[4, 4, 0, 0]} />
+            {/* Stacked bars: Current patients on bottom, procedure admits on top */}
             <Bar
-              dataKey="discharges"
-              name="Discharges"
-              fill={COLORS.discharges}
-              radius={[4, 4, 0, 0]}
+              dataKey="currentPatients"
+              name="Current Patients"
+              stackId="census"
+              fill={COLORS.census}
             />
             <Bar
-              dataKey="downgrades"
-              name="Downgrades"
-              fill={COLORS.downgrades}
+              dataKey="procedureAdmits"
+              name="Procedure Admits"
+              stackId="census"
+              fill={COLORS.admits}
               radius={[4, 4, 0, 0]}
             />
-            <Bar dataKey="procedureAdmits" name="Procedure Admits" fill={COLORS.admits} radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -260,19 +272,14 @@ export default function CensusForecastChart({
       <div className="mt-4 flex flex-wrap gap-4 text-sm border-t border-slate-700 pt-4">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded" style={{ backgroundColor: COLORS.census }} />
-          <span className="text-slate-400">Projected Census</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded" style={{ backgroundColor: COLORS.discharges }} />
-          <span className="text-slate-400">Predicted Discharges</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded" style={{ backgroundColor: COLORS.downgrades }} />
-          <span className="text-slate-400">ICU Downgrades</span>
+          <span className="text-slate-400">Current Patients (census minus discharges)</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded" style={{ backgroundColor: COLORS.admits }} />
-          <span className="text-slate-400">Procedure Admits</span>
+          <span className="text-slate-400">Procedure Admits (new admissions from scheduled procedures)</span>
+        </div>
+        <div className="text-slate-500 text-xs ml-auto">
+          Bar height = Total Projected Census
         </div>
       </div>
     </div>
