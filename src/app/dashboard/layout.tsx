@@ -118,8 +118,9 @@ export default function DashboardLayout({
   const [isSyncing, setIsSyncing] = useState(false);
 
   // Sync user to Convex when Clerk user is loaded but Convex user doesn't exist
+  // Use currentUser === null (not undefined) to avoid syncing during loading
   useEffect(() => {
-    if (isLoaded && user && !currentUser && !isSyncing && !syncError) {
+    if (isLoaded && user && currentUser === null && !isSyncing && !syncError) {
       setIsSyncing(true);
       syncUser({
         clerkId: user.id,

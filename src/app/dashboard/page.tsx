@@ -3,18 +3,21 @@
 import { useUser, SignOutButton } from "@clerk/nextjs";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 export default function DashboardPage() {
   const { user, isLoaded: clerkLoaded } = useUser();
   const [syncError, setSyncError] = useState<string | null>(null);
+  const hasSynced = useRef(false);
 
   // Sync user to Convex when they load
   const syncUser = useMutation(api.users.syncUser);
   const currentUser = useQuery(api.users.getCurrentUser);
 
+  // Only sync if user doesn't exist in Convex yet (avoid OCC conflicts)
   useEffect(() => {
-    if (clerkLoaded && user) {
+    if (clerkLoaded && user && currentUser === null && !hasSynced.current) {
+      hasSynced.current = true;
       syncUser({
         clerkId: user.id,
         email: user.primaryEmailAddress?.emailAddress || "",
@@ -24,9 +27,10 @@ export default function DashboardPage() {
       }).catch((error) => {
         console.error("Failed to sync user:", error);
         setSyncError(error.message);
+        hasSynced.current = false; // Allow retry on error
       });
     }
-  }, [clerkLoaded, user, syncUser]);
+  }, [clerkLoaded, user, currentUser, syncUser]);
 
   if (!clerkLoaded) {
     return (
