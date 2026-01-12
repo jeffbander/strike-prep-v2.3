@@ -30,14 +30,22 @@ export const syncUser = mutation({
       .first();
 
     if (existingUser) {
-      // Update existing user
-      await ctx.db.patch(existingUser._id, {
-        email: args.email,
-        firstName: args.firstName,
-        lastName: args.lastName,
-        imageUrl: args.imageUrl,
-        updatedAt: Date.now(),
-      });
+      // Only update if something actually changed (avoid OCC conflicts)
+      const needsUpdate =
+        existingUser.email !== args.email ||
+        existingUser.firstName !== args.firstName ||
+        existingUser.lastName !== args.lastName ||
+        existingUser.imageUrl !== args.imageUrl;
+
+      if (needsUpdate) {
+        await ctx.db.patch(existingUser._id, {
+          email: args.email,
+          firstName: args.firstName,
+          lastName: args.lastName,
+          imageUrl: args.imageUrl,
+          updatedAt: Date.now(),
+        });
+      }
       return { userId: existingUser._id, isNew: false, role: existingUser.role };
     }
 
