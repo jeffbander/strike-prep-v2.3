@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import Link from "next/link";
@@ -11,6 +11,7 @@ import ProcedureImport from "@/components/procedures/ProcedureImport";
 export default function ProceduresPage() {
   const currentUser = useQuery(api.users.getCurrentUser);
   const hospitals = useQuery(api.hospitals.list, {});
+  const clearAllProcedures = useMutation(api.procedures.clearAllProcedures);
 
   const [selectedHospitalId, setSelectedHospitalId] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -18,6 +19,7 @@ export default function ProceduresPage() {
     return new Date().toISOString().split("T")[0];
   });
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   const isSuperAdmin = currentUser?.role === "super_admin";
   const needsHospitalSelection = isSuperAdmin || !currentUser?.hospitalId;
@@ -53,6 +55,26 @@ export default function ProceduresPage() {
       });
     } catch {
       return dateStr;
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!effectiveHospitalId) return;
+
+    const confirmed = window.confirm(
+      "Are you sure you want to delete ALL procedure data for this hospital?\n\nThis action cannot be undone."
+    );
+
+    if (!confirmed) return;
+
+    setIsClearing(true);
+    try {
+      const result = await clearAllProcedures({ hospitalId: effectiveHospitalId });
+      alert(`Cleared ${result.patientsDeleted} patients and ${result.importsDeleted} imports.`);
+    } catch (error) {
+      alert(`Failed to clear: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -97,6 +119,29 @@ export default function ProceduresPage() {
               onChange={(e) => setSelectedDate(e.target.value)}
               className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:outline-none focus:border-violet-500"
             />
+
+            {/* Clear All Button */}
+            {effectiveHospitalId && (
+              <button
+                onClick={handleClearAll}
+                disabled={isClearing}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+              >
+                {isClearing ? (
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                    />
+                  </svg>
+                )}
+                {isClearing ? "Clearing..." : "Clear All"}
+              </button>
+            )}
 
             {/* Import Button */}
             {effectiveHospitalId && (
