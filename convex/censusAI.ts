@@ -2,6 +2,16 @@ import { v } from "convex/values";
 import { action, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import {
+  extractClinicalSignals,
+  assessTrajectory,
+  estimateDowngradeDays,
+  estimateHospitalDischargeDays,
+  detectOneToOneDevices,
+  requiresOneToOne as checkRequiresOneToOne,
+  formatSignalsForPrompt,
+  ClinicalSignals,
+} from "./lib/clinicalSignals";
 
 // ═══════════════════════════════════════════════════════════════════
 // AI PROMPTS
@@ -212,14 +222,18 @@ export const generatePredictions = action({
           for (const pred of predictions) {
             const patient = icuPatients.find((p) => p.mrn === pred.mrn);
             if (patient) {
-              // Calculate predicted downgrade date if applicable
+              // Calculate clinical signals locally for override
+              const calculated = calculatePatientSignals(patient.rawGeneralComments, true);
+
+              // Calculate predicted downgrade date using calculated days
               let predictedDowngradeDate: string | undefined;
               let predictedDowngradeUnit: string | undefined;
-              if (pred.predictedDowngrade?.likely && pred.predictedDowngrade.daysUntilDowngrade !== null) {
+              const downgradeDays = calculated.downgradeDays;
+              if (downgradeDays < 30) {
                 const downgradeDate = new Date();
-                downgradeDate.setDate(downgradeDate.getDate() + pred.predictedDowngrade.daysUntilDowngrade);
+                downgradeDate.setDate(downgradeDate.getDate() + downgradeDays);
                 predictedDowngradeDate = downgradeDate.toISOString().split("T")[0];
-                predictedDowngradeUnit = pred.predictedDowngrade.targetUnit || undefined;
+                predictedDowngradeUnit = pred.predictedDowngrade?.targetUnit || undefined;
               }
 
               await ctx.runMutation(internal.census.updatePatientPredictions, {
@@ -229,12 +243,15 @@ export const generatePredictions = action({
                   clinicalStatus: pred.clinicalStatus,
                   dispositionConsiderations: pred.dispositionConsiderations,
                   pendingProcedures: pred.pendingProcedures,
-                  projectedDischargeDays: pred.projectedDischargeDays,
+                  // Override with calculated values
+                  projectedDischargeDays: calculated.dischargeDays,
+                  projectedDowngradeDays: calculated.downgradeDays,
+                  trajectory: calculated.trajectory,
                   losReasoning: pred.losReasoning,
-                  // 1:1 Nursing detection
-                  requiresOneToOne: pred.requiresOneToOne,
-                  oneToOneDevices: pred.oneToOneDevices,
-                  oneToOneSource: pred.requiresOneToOne ? "ai" : undefined,
+                  // 1:1 Nursing detection - use calculated values
+                  requiresOneToOne: calculated.requiresOneToOne,
+                  oneToOneDevices: calculated.oneToOneDevices,
+                  oneToOneSource: calculated.requiresOneToOne ? "signals" : undefined,
                   // Downgrade prediction
                   predictedDowngradeDate,
                   predictedDowngradeUnit,
@@ -255,6 +272,9 @@ export const generatePredictions = action({
           for (const pred of predictions) {
             const patient = floorPatients.find((p) => p.mrn === pred.mrn);
             if (patient) {
+              // Calculate clinical signals locally for override
+              const calculated = calculatePatientSignals(patient.rawGeneralComments, false);
+
               await ctx.runMutation(internal.census.updatePatientPredictions, {
                 patientId: patient._id,
                 predictions: {
@@ -262,11 +282,13 @@ export const generatePredictions = action({
                   clinicalStatus: pred.clinicalStatus,
                   dispositionConsiderations: pred.dispositionConsiderations,
                   pendingProcedures: pred.pendingProcedures,
-                  projectedDischargeDays: pred.projectedDischargeDays,
+                  // Override with calculated values
+                  projectedDischargeDays: calculated.dischargeDays,
+                  trajectory: calculated.trajectory,
                   losReasoning: pred.losReasoning,
-                  // Floor patients don't typically need 1:1
-                  requiresOneToOne: false,
-                  oneToOneDevices: [],
+                  // Floor patients - use calculated values for edge cases
+                  requiresOneToOne: calculated.requiresOneToOne,
+                  oneToOneDevices: calculated.oneToOneDevices,
                 },
               });
               processed++;
@@ -294,6 +316,40 @@ export const generatePredictions = action({
 });
 
 /**
+ * Extract clinical signals and calculate estimates for a patient
+ */
+function calculatePatientSignals(
+  comments: string | undefined,
+  isICU: boolean
+): {
+  signals: ClinicalSignals;
+  trajectory: string;
+  downgradeDays: number;
+  dischargeDays: number;
+  oneToOneDevices: string[];
+  requiresOneToOne: boolean;
+  signalsPrompt: string;
+} {
+  const signals = extractClinicalSignals(comments || "");
+  const trajectory = assessTrajectory(comments || "", signals);
+  const downgradeEstimate = estimateDowngradeDays(signals);
+  const dischargeEstimate = estimateHospitalDischargeDays(signals, downgradeEstimate.days, isICU);
+  const oneToOneDevices = detectOneToOneDevices(signals);
+  const requiresOneToOne = checkRequiresOneToOne(signals);
+  const signalsPrompt = formatSignalsForPrompt(signals, trajectory, downgradeEstimate.days, dischargeEstimate.days);
+
+  return {
+    signals,
+    trajectory,
+    downgradeDays: downgradeEstimate.days,
+    dischargeDays: dischargeEstimate.days,
+    oneToOneDevices,
+    requiresOneToOne,
+    signalsPrompt,
+  };
+}
+
+/**
  * Call Anthropic Claude API to generate predictions
  */
 async function callAnthropic(
@@ -309,23 +365,43 @@ async function callAnthropic(
     primaryDiagnosis?: string;
     clinicalStatus?: string;
     rawGeneralComments?: string;
+    unitType?: string;
   }>,
   rawClinicalNotes?: string
 ): Promise<PatientPrediction[]> {
-  // Build the user message with patient data
-  const patientData = patients.map((p) => ({
-    mrn: p.mrn,
-    initials: p.initials,
-    unit: p.currentUnitName,
-    admissionDate: p.admissionDate,
-    service: p.service,
-    losDays: p.losDays,
-    existingDiagnosis: p.primaryDiagnosis,
-    existingStatus: p.clinicalStatus,
-    generalComments: p.rawGeneralComments,
-  }));
+  // Build the user message with patient data and clinical signals
+  const patientData = patients.map((p) => {
+    const isICU = p.unitType === "icu";
+    const calculated = calculatePatientSignals(p.rawGeneralComments, isICU);
 
-  let userMessage = `Please analyze the following patients and provide discharge predictions:\n\n${JSON.stringify(patientData, null, 2)}`;
+    return {
+      mrn: p.mrn,
+      initials: p.initials,
+      unit: p.currentUnitName,
+      admissionDate: p.admissionDate,
+      service: p.service,
+      losDays: p.losDays,
+      existingDiagnosis: p.primaryDiagnosis,
+      existingStatus: p.clinicalStatus,
+      generalComments: p.rawGeneralComments,
+      // Pre-calculated clinical signals
+      clinicalSignals: calculated.signalsPrompt,
+      calculatedTrajectory: calculated.trajectory,
+      calculatedDischargeDays: calculated.dischargeDays,
+      calculatedDowngradeDays: isICU ? calculated.downgradeDays : undefined,
+    };
+  });
+
+  let userMessage = `Please analyze the following patients and provide discharge predictions.
+
+IMPORTANT: Each patient includes PRE-CALCULATED clinical signals. Use the calculated values for:
+- projectedDischargeDays (use calculatedDischargeDays)
+- Trajectory assessment (use calculatedTrajectory)
+- For ICU patients, use calculatedDowngradeDays for predictedDowngrade.daysUntilDowngrade
+
+Focus your analysis on primaryDiagnosis, clinicalStatus, dispositionConsiderations, and losReasoning.
+
+Patients:\n\n${JSON.stringify(patientData, null, 2)}`;
 
   if (rawClinicalNotes) {
     userMessage += `\n\nAdditional clinical notes:\n${rawClinicalNotes}`;

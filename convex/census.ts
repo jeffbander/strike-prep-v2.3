@@ -580,6 +580,10 @@ export const updatePatientPredictions = internalMutation({
       pendingProcedures: v.optional(v.string()),
       projectedDischargeDays: v.optional(v.number()),
       losReasoning: v.optional(v.string()), // AI explanation of LOS prediction
+      // Clinical signal extraction results
+      trajectory: v.optional(v.string()), // "Improving", "Stable", "Critical", etc.
+      projectedDowngradeDays: v.optional(v.number()), // Days until ICU downgrade
+      trend: v.optional(v.string()), // "Progressing", "No Change", "Regressed", "New"
       // 1:1 Nursing detection
       requiresOneToOne: v.optional(v.boolean()),
       oneToOneDevices: v.optional(v.array(v.string())),

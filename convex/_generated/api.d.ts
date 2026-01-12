@@ -26,6 +26,7 @@ import type * as jobTypes from "../jobTypes.js";
 import type * as laborPool from "../laborPool.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_cascade from "../lib/cascade.js";
+import type * as lib_clinicalSignals from "../lib/clinicalSignals.js";
 import type * as lib_deletion from "../lib/deletion.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as matching from "../matching.js";
@@ -67,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   laborPool: typeof laborPool;
   "lib/auth": typeof lib_auth;
   "lib/cascade": typeof lib_cascade;
+  "lib/clinicalSignals": typeof lib_clinicalSignals;
   "lib/deletion": typeof lib_deletion;
   "lib/validation": typeof lib_validation;
   matching: typeof matching;

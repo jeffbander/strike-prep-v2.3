@@ -746,6 +746,12 @@ export default defineSchema({
     // Predicted downgrade (for ICU patients)
     predictedDowngradeDate: v.optional(v.string()), // When ICU patient likely moves to floor
     predictedDowngradeUnit: v.optional(v.string()), // Target floor unit
+    projectedDowngradeDays: v.optional(v.number()), // Days until ICU downgrade
+
+    // Clinical signal extraction results
+    losReasoning: v.optional(v.string()), // AI explanation of LOS prediction
+    trajectory: v.optional(v.string()), // "Improving", "Stable", "Critical", etc.
+    trend: v.optional(v.string()), // "Progressing", "No Change", "Regressed", "New"
 
     // Import tracking
     lastSeenImportId: v.optional(v.id("census_imports")),
