@@ -1,7 +1,8 @@
-import { mutation, query, internalMutation } from "./_generated/server";
+import { mutation, query, action, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { requireAuth, requireHospitalAccess, auditLog } from "./lib/auth";
 import { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 
 // ═══════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -756,6 +757,149 @@ export const markDischargedPatients = mutation({
     }
 
     return { dischargedCount };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// CLEAR ALL CENSUS DATA
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Clear all census data for a hospital (hard delete)
+ * Uses action with batched mutations to avoid Convex write limits
+ */
+export const clearAllCensus = action({
+  args: {
+    hospitalId: v.id("hospitals"),
+  },
+  handler: async (ctx, args): Promise<{ patientsDeleted: number; importsDeleted: number; historyDeleted: number }> => {
+    // Get all IDs for clearing
+    const { patientIds, importIds, historyIds } = await ctx.runQuery(
+      internal.census.getClearableCensusIds,
+      { hospitalId: args.hospitalId }
+    );
+
+    const totalPatients = patientIds.length;
+    const totalImports = importIds.length;
+    const totalHistory = historyIds.length;
+
+    // Delete patients in batches of 50
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < patientIds.length; i += BATCH_SIZE) {
+      const batch = patientIds.slice(i, i + BATCH_SIZE);
+      await ctx.runMutation(internal.census.deleteCensusBatch, {
+        patientIds: batch,
+        importIds: [],
+        historyIds: [],
+      });
+    }
+
+    // Delete history in batches
+    for (let i = 0; i < historyIds.length; i += BATCH_SIZE) {
+      const batch = historyIds.slice(i, i + BATCH_SIZE);
+      await ctx.runMutation(internal.census.deleteCensusBatch, {
+        patientIds: [],
+        importIds: [],
+        historyIds: batch,
+      });
+    }
+
+    // Delete imports (usually just a few)
+    if (importIds.length > 0) {
+      await ctx.runMutation(internal.census.deleteCensusBatch, {
+        patientIds: [],
+        importIds,
+        historyIds: [],
+      });
+    }
+
+    // Log the clear action
+    await ctx.runMutation(internal.census.logCensusClearAction, {
+      hospitalId: args.hospitalId,
+      patientsDeleted: totalPatients,
+      importsDeleted: totalImports,
+      historyDeleted: totalHistory,
+    });
+
+    return {
+      patientsDeleted: totalPatients,
+      importsDeleted: totalImports,
+      historyDeleted: totalHistory,
+    };
+  },
+});
+
+/**
+ * Internal query to get IDs for clearing census data
+ */
+export const getClearableCensusIds = internalQuery({
+  args: {
+    hospitalId: v.id("hospitals"),
+  },
+  handler: async (ctx, args) => {
+    const patients = await ctx.db
+      .query("census_patients")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .collect();
+
+    const imports = await ctx.db
+      .query("census_imports")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .collect();
+
+    const history = await ctx.db
+      .query("census_patient_history")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .collect();
+
+    return {
+      patientIds: patients.map((p) => p._id),
+      importIds: imports.map((i) => i._id),
+      historyIds: history.map((h) => h._id),
+    };
+  },
+});
+
+/**
+ * Internal mutation to delete a batch of census records
+ */
+export const deleteCensusBatch = internalMutation({
+  args: {
+    patientIds: v.array(v.id("census_patients")),
+    importIds: v.array(v.id("census_imports")),
+    historyIds: v.array(v.id("census_patient_history")),
+  },
+  handler: async (ctx, args) => {
+    for (const id of args.patientIds) {
+      await ctx.db.delete(id);
+    }
+    for (const id of args.importIds) {
+      await ctx.db.delete(id);
+    }
+    for (const id of args.historyIds) {
+      await ctx.db.delete(id);
+    }
+  },
+});
+
+/**
+ * Internal mutation to log census clear action
+ */
+export const logCensusClearAction = internalMutation({
+  args: {
+    hospitalId: v.id("hospitals"),
+    patientsDeleted: v.number(),
+    importsDeleted: v.number(),
+    historyDeleted: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    await auditLog(ctx, user, "CLEAR", "HOSPITAL", args.hospitalId, {
+      type: "census_data",
+      patientsDeleted: args.patientsDeleted,
+      importsDeleted: args.importsDeleted,
+      historyDeleted: args.historyDeleted,
+    });
   },
 });
 

@@ -21,8 +21,10 @@ export default function CensusPage() {
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [selectedForecastUnit, setSelectedForecastUnit] = useState<string>("");
   const [isProcedureImportOpen, setIsProcedureImportOpen] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   const generatePredictions = useAction(api.censusAI.generatePredictions);
+  const clearAllCensus = useAction(api.census.clearAllCensus);
 
   const isSuperAdmin = currentUser?.role === "super_admin";
   const needsHospitalSelection = isSuperAdmin || !currentUser?.hospitalId;
@@ -106,6 +108,26 @@ export default function CensusPage() {
       hour: "numeric",
       minute: "2-digit",
     });
+  };
+
+  const handleClearAll = async () => {
+    if (!effectiveHospitalId) return;
+
+    const confirmed = window.confirm(
+      "Are you sure you want to delete ALL census data for this hospital?\n\nThis includes all patients, imports, and history.\n\nThis action cannot be undone."
+    );
+
+    if (!confirmed) return;
+
+    setIsClearing(true);
+    try {
+      const result = await clearAllCensus({ hospitalId: effectiveHospitalId });
+      alert(`Cleared ${result.patientsDeleted} patients, ${result.importsDeleted} imports, and ${result.historyDeleted} history records.`);
+    } catch (error) {
+      alert(`Failed to clear: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setIsClearing(false);
+    }
   };
 
   const handleRegeneratePredictions = async () => {
@@ -198,6 +220,25 @@ export default function CensusPage() {
             )}
             {effectiveHospitalId && (
               <>
+                <button
+                  onClick={handleClearAll}
+                  disabled={isClearing}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {isClearing ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
+                    </svg>
+                  )}
+                  {isClearing ? "Clearing..." : "Clear All"}
+                </button>
                 <button
                   onClick={() => setIsProcedureImportOpen(true)}
                   className="px-4 py-2 bg-violet-600 hover:bg-violet-700 rounded-lg transition-colors flex items-center gap-2"
