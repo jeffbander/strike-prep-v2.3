@@ -783,8 +783,11 @@ export const clearAllCensus = action({
     const totalImports = importIds.length;
     const totalHistory = historyIds.length;
 
-    // Delete patients in batches of 50
-    const BATCH_SIZE = 50;
+    // Delete in small batches to avoid timeouts
+    // Combine patients, history, and imports into batches of 20
+    const BATCH_SIZE = 20;
+
+    // Delete patients in batches
     for (let i = 0; i < patientIds.length; i += BATCH_SIZE) {
       const batch = patientIds.slice(i, i + BATCH_SIZE);
       await ctx.runMutation(internal.census.deleteCensusBatch, {
@@ -804,11 +807,12 @@ export const clearAllCensus = action({
       });
     }
 
-    // Delete imports (usually just a few)
-    if (importIds.length > 0) {
+    // Delete imports in batches
+    for (let i = 0; i < importIds.length; i += BATCH_SIZE) {
+      const batch = importIds.slice(i, i + BATCH_SIZE);
       await ctx.runMutation(internal.census.deleteCensusBatch, {
         patientIds: [],
-        importIds,
+        importIds: batch,
         historyIds: [],
       });
     }

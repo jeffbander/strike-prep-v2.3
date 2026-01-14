@@ -785,8 +785,8 @@ export const clearAllProcedures = action({
     const totalPatients = patientIds.length;
     const totalImports = importIds.length;
 
-    // Delete patients in batches of 50
-    const BATCH_SIZE = 50;
+    // Delete patients in batches of 20 to avoid timeouts
+    const BATCH_SIZE = 20;
     for (let i = 0; i < patientIds.length; i += BATCH_SIZE) {
       const batch = patientIds.slice(i, i + BATCH_SIZE);
       await ctx.runMutation(internal.procedures.deleteProcedureBatch, {
@@ -795,11 +795,12 @@ export const clearAllProcedures = action({
       });
     }
 
-    // Delete imports in one batch (usually just a few)
-    if (importIds.length > 0) {
+    // Delete imports in batches
+    for (let i = 0; i < importIds.length; i += BATCH_SIZE) {
+      const batch = importIds.slice(i, i + BATCH_SIZE);
       await ctx.runMutation(internal.procedures.deleteProcedureBatch, {
         patientIds: [],
-        importIds,
+        importIds: batch,
       });
     }
 
